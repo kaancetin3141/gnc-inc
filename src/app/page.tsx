@@ -40,15 +40,20 @@ async function getProjects(): Promise<ProjectData[]> {
 export default async function Home() {
   const projects = await getProjects();
 
+  /*
+   * Meta.com akışı: sticky header → tam ekran koyu hero → dönüşümlü ürün
+   * vitrinleri → canlı durum → hizmetler → teknoloji şeridi → şirket →
+   * koyu iletişim → çok kolonlu footer.
+   */
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
       <main className="flex-1">
         <Hero />
-        <LiveStatus />
         <Projects projects={projects} />
-        <TechMarquee />
+        <LiveStatus />
         <ServicesSection />
+        <TechMarquee />
         <About />
         <Contact />
       </main>

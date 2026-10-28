@@ -16,6 +16,8 @@ DOMAIN="gncinc.online"
 BASE_DIR="/opt/gnc"
 LOG_FILE="/var/log/gnc-kurulum.log"
 DB_PASS_PREFIX="gnc"
+# Betiğin kendi bulunduğu klasör — göreli path kırılganlığına karşı
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 info()  { echo -e "\033[0;32m[+]\033[0m $*"; }
 warn()  { echo -e "\033[0;33m[!]\033[0m $*"; }
@@ -205,7 +207,7 @@ pm2 save
 # 7) nginx + sertifikalar
 # ----------------------------------------------------------------------------
 info "nginx yapılandırması…"
-cp deploy/nginx/gncinc.online.conf /etc/nginx/sites-available/gncinc.online.conf
+cp "$DEPLOY_DIR/nginx/gncinc.online.conf" /etc/nginx/sites-available/gncinc.online.conf
 ln -sf /etc/nginx/sites-available/gncinc.online.conf /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
@@ -228,7 +230,7 @@ info "Güvenlik duvarı…"
 ufw allow 22,80,443/tcp >/dev/null; ufw --force enable
 
 info "Yedekleme cron'u (günlük 03:30)…"
-install -m 755 deploy/backup.sh /usr/local/bin/gnc-backup
+install -m 755 "$DEPLOY_DIR/backup.sh" /usr/local/bin/gnc-backup
 ( crontab -l 2>/dev/null | grep -v gnc-backup; \
   echo "30 3 * * * /usr/local/bin/gnc-backup >> /var/log/gnc-backup.log 2>&1" ) | crontab -
 
@@ -244,5 +246,9 @@ for port in 3000 3001 3002 3003 3004 3005 3006 3007; do
 done
 
 echo
+echo "\033[0;32m==============================================\033[0m"
 info "KURULUM TAMAMLANDI — https://www.$DOMAIN"
+info "Tek komutla yönetim:  sudo bash $DEPLOY_DIR/servis.sh durum"
+info "Tek komutla güncelleme: sudo bash $DEPLOY_DIR/guncelle.sh"
 info "Komut referansı: deploy/SUNUCU-KOMUTLARI.md"
+echo "\033[0;32m==============================================\033[0m"

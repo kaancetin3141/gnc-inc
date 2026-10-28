@@ -169,9 +169,53 @@
     box-shadow: 0 0 42px -12px oklch(0.72 0.14 168 / 45%);
   }
 
-  /* Bölüm konteyner ritmi */
+  /* Bölüm konteyner ritmi — Meta.com genişliğinde (1280px) */
   .section-x {
-    @apply mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8;
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* ============================================================
+     Meta.com-tarzı tasarım dili
+     ============================================================ */
+
+  /* Mürekkep siyahı — GNC yeşilimsi ton katılmış derin siyah.
+     Koyu vitrin bölümleri ve hero her iki temada bunu kullanır. */
+  .ink {
+    background-color: oklch(0.14 0.012 175);
+    color: oklch(0.97 0.004 168);
+  }
+  .ink-muted {
+    color: oklch(0.72 0.012 172);
+  }
+  .ink-line {
+    border-color: oklch(1 0 0 / 12%);
+  }
+
+  /* Meta-tarzı metin linki: sade metin, hover'da alt çizgi */
+  .meta-link {
+    @apply font-medium underline-offset-4 hover:underline;
+  }
+
+  /* Meta-tarzı pill buton tabanı */
+  .pill {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium transition-all;
+  }
+  .pill-solid {
+    @apply bg-foreground text-background hover:opacity-85;
+  }
+  .ink .pill-solid {
+    background-color: oklch(0.97 0.004 168);
+    color: oklch(0.14 0.012 175);
+  }
+  .pill-outline {
+    @apply border border-border text-foreground hover:bg-accent;
+  }
+  .ink .pill-outline {
+    border-color: oklch(1 0 0 / 30%);
+    color: oklch(0.97 0.004 168);
+  }
+  .ink .pill-outline:hover {
+    background-color: oklch(1 0 0 / 8%);
   }
 }
 

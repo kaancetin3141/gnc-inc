@@ -17,12 +17,13 @@ type CacheShape = { at: number; data: StatusEntry[] };
 let cache: CacheShape | null = null;
 const TTL = 15_000;
 
-async function checkOne(port: number): Promise<{ ok: boolean; ms: number | null }> {
+async function checkOne(port: number, healthPath: string): Promise<{ ok: boolean; ms: number | null }> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 1600);
   const start = Date.now();
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/`, {
+    // Hafif health ucu — Next dev servislerde ana sayfa derlemesini (RAM şişmesi) tetiklemez
+    const res = await fetch(`http://127.0.0.1:${port}${healthPath}`, {
       signal: ctrl.signal,
       cache: "no-store",
       headers: { "user-agent": "gnc-inc/status/1.0" },
@@ -43,7 +44,7 @@ export async function GET() {
   }
   const results = await Promise.all(
     SERVICES.map(async (s): Promise<StatusEntry> => {
-      const r = await checkOne(s.port);
+      const r = await checkOne(s.port, s.healthPath);
       return {
         id: s.id,
         name: s.name,

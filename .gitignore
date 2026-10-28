@@ -1,2 +1,19 @@
-skills/
+# build & önbellek
+.next/
+out/
+dist/
+dev.log
+*.log
+
+# bağımlılıklar
 node_modules/
+
+# sandbox iç dosyaları
+skills/
+worklog.md
+db/
+mini-services/
+
+# misc
+.DS_Store
+*.tsbuildinfo

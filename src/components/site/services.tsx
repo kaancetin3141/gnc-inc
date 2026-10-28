@@ -32,9 +32,13 @@ const SERVICES = [
 
 export function ServicesSection() {
   return (
-    <section id="hizmetler" className="section-x py-20 sm:py-24">
-      <Reveal className="mx-auto max-w-2xl text-center">
-        <h2 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">
+    <section id="hizmetler" className="section-x py-16 sm:py-24">
+      {/* Meta tarzı: sol hizalı bölüm başlığı */}
+      <Reveal className="max-w-2xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+          Ne yapıyoruz
+        </p>
+        <h2 className="mt-3 text-balance text-3xl font-bold tracking-tight sm:text-4xl">
           Hizmetler
         </h2>
         <p className="mt-3 text-pretty text-muted-foreground">
@@ -42,25 +46,19 @@ export function ServicesSection() {
         </p>
       </Reveal>
 
-      <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Meta ızgarası: ayırıcı çizgili, gölgesiz sütunlar */}
+      <div className="mt-12 grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
         {SERVICES.map((s, i) => (
-          <Reveal key={s.title} delay={Math.min(i * 0.07, 0.35)}>
-            <div className="group h-full rounded-2xl border border-border/80 bg-card/60 p-6 transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10">
-              <div className="flex size-11 items-center justify-center rounded-xl bg-primary/12 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+          <Reveal key={s.title} delay={Math.min(i * 0.07, 0.28)}>
+            <div className="group h-full border-t-2 border-foreground/10 pt-6 transition-colors hover:border-primary">
+              <div className="flex size-10 items-center justify-center rounded-full border border-border text-primary transition-colors group-hover:border-primary/50 group-hover:bg-primary/10">
                 <s.icon className="size-5" />
               </div>
-              <h3 className="mt-4 text-base font-semibold">{s.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {s.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-md bg-secondary px-2 py-0.5 font-mono text-[10px] text-secondary-foreground"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
+              <h3 className="mt-4 text-lg font-semibold tracking-tight">{s.title}</h3>
+              <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
+              <p className="mt-4 font-mono text-[11px] text-muted-foreground/70">
+                {s.tags.join(" · ")}
+              </p>
             </div>
           </Reveal>
         ))}

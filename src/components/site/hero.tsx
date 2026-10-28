@@ -1,106 +1,109 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowDown, ArrowUpRight, Activity } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { SERVICES, serviceUrl } from "@/lib/site-config";
+import { ArrowDown, ArrowUpRight } from "lucide-react";
+import { serviceUrl } from "@/lib/site-config";
 
+// Hero altı istatistik şeridi — Meta dili: düz sayılar, kart YOK
 const STATS = [
-  { value: "7", label: "Canlı Ürün" },
-  { value: "100+", label: "Veri Modeli" },
-  { value: "3", label: "Platform (Web · Android · iOS)" },
-  { value: "17", label: "PostgreSQL Veritabanı Rolü" },
+  { value: "8", label: "Canlı Servis" },
+  { value: "7", label: "Ürün" },
+  { value: "17", label: "PostgreSQL Rolü" },
+  { value: "3", label: "Platform" },
 ];
+
+const ease = [0.21, 0.47, 0.32, 0.98] as const;
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden pt-16">
-      {/* Arkaplan katmanları */}
-      <div className="grid-pattern absolute inset-0" aria-hidden="true" />
-      <div
-        className="absolute -top-40 left-1/2 h-[480px] w-[880px] -translate-x-1/2 rounded-full bg-primary/12 blur-3xl"
-        aria-hidden="true"
-      />
-      <div
-        className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background to-transparent"
-        aria-hidden="true"
-      />
+    <section className="ink relative overflow-hidden">
+      {/* Görsel katmanlar — Meta hero'sundaki gibi tam kanama görsel + karartma */}
+      <div className="absolute inset-0" aria-hidden="true">
+        <img
+          src="/images/hero.png"
+          alt=""
+          className="size-full object-cover opacity-55"
+          fetchPriority="high"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[oklch(0.14_0.012_175)] via-[oklch(0.14_0.012_175/85%)] to-[oklch(0.14_0.012_175/35%)]" />
+        <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[oklch(0.14_0.012_175)] to-transparent" />
+      </div>
 
-      <div className="section-x relative flex flex-col items-center pb-16 pt-14 text-center sm:pt-20">
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <Badge
-            variant="outline"
-            className="gap-2 rounded-full border-primary/40 bg-primary/10 px-4 py-1.5 text-primary"
+      <div className="section-x relative flex min-h-[88svh] flex-col justify-center pt-16 pb-0 sm:min-h-[92svh]">
+        <div className="max-w-3xl">
+          {/* Meta tarzı kısa kategori etiketi — dev başlığın üstünde küçük gri metin */}
+          <motion.p
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease }}
+            className="ink-muted text-sm font-medium uppercase tracking-[0.18em]"
           >
-            <Activity className="size-3.5" />
-            8 canlı sistem · 7 ürün · tek çatı
-          </Badge>
-        </motion.div>
+            GNC Inc — Yazılım & Dijital Ürünler
+          </motion.p>
 
-        <motion.h1
-          initial={{ opacity: 0, y: 22 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.08 }}
-          className="mt-6 max-w-4xl text-balance text-4xl font-bold leading-[1.08] tracking-tight sm:text-6xl"
-        >
-          Fikirden <span className="text-gradient">canlı ürüne</span>,
-          <br className="hidden sm:block" /> tek çatı altında.
-        </motion.h1>
+          {/* Meta başlığı: iki satır, kalın, sıkı harf aralığı */}
+          <motion.h1
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.08, ease }}
+            className="mt-5 text-balance text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl"
+          >
+            Fikirden canlı ürüne.
+            <br />
+            Tek çatı altında.
+          </motion.h1>
 
-        <motion.p
-          initial={{ opacity: 0, y: 22 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.16 }}
-          className="mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg"
-        >
-          GNC Inc; ERP/CRM&apos;den yapay zekâ destekli beslenmeye, bulut oyunlarından mobil
-          platformlara uzanan <strong className="font-semibold text-foreground">7 dijital ürünü</strong>{" "}
-          geliştirir ve aynı sunucu altyapısında yaşatır. PostgreSQL 17, Next.js 16 ve Flutter ile.
-        </motion.p>
+          <motion.p
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.16, ease }}
+            className="ink-muted mt-6 max-w-xl text-pretty text-lg leading-relaxed"
+          >
+            ERP/CRM&apos;den yapay zekâ destekli beslenmeye, bulut oyunlarından mobil
+            platformlara — <strong className="font-semibold text-[oklch(0.97_0.004_168)]">7 dijital ürün</strong>{" "}
+            geliştiriyor ve hepsini kendi sunucumuzda, PostgreSQL 17 üzerinde yaşatıyoruz.
+          </motion.p>
 
-        <motion.div
-          initial={{ opacity: 0, y: 22 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.24 }}
-          className="mt-8 flex flex-wrap items-center justify-center gap-3"
-        >
-          <Button asChild size="lg" className="glow-emerald">
-            <a href="#projeler">
-              Projeleri Keşfet
+          {/* Meta CTA dili: yuvarlak pill butonlar — solda dolu, sağda outline */}
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.24, ease }}
+            className="mt-9 flex flex-wrap items-center gap-3"
+          >
+            <a href="#projeler" className="pill pill-solid">
+              Ürünleri Keşfet
               <ArrowDown className="size-4" />
             </a>
-          </Button>
-          <Button asChild size="lg" variant="outline" className="border-primary/35">
-            <a href={serviceUrl({ port: 3001, prodDomain: "crm.gncinc.online" })}>
+            <a
+              href={serviceUrl({ port: 3001, prodDomain: "crm.gncinc.online" })}
+              className="pill pill-outline"
+            >
               ERP&apos;yi Canlı Dene
               <ArrowUpRight className="size-4" />
             </a>
-          </Button>
-        </motion.div>
+          </motion.div>
+        </div>
+      </div>
 
-        <motion.dl
-          initial={{ opacity: 0, y: 26 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.34 }}
-          className="mt-14 grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4"
-        >
+      {/* İstatistik şeridi — hero'nun dibinde saç-teli çizgiyle */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.7, delay: 0.4 }}
+        className="relative border-t border-white/10"
+      >
+        <div className="section-x grid grid-cols-2 gap-6 py-6 sm:grid-cols-4">
           {STATS.map((s) => (
-            <div
-              key={s.label}
-              className="glass rounded-2xl border border-border/70 px-4 py-5 text-center"
-            >
-              <dt className="sr-only">{s.label}</dt>
-              <dd className="text-2xl font-bold tracking-tight text-primary">{s.value}</dd>
-              <dd className="mt-1 text-xs text-muted-foreground">{s.label}</dd>
+            <div key={s.label} className="flex items-baseline gap-2.5">
+              <span className="text-2xl font-bold tracking-tight text-[oklch(0.72_0.14_168)] sm:text-3xl">
+                {s.value}
+              </span>
+              <span className="ink-muted text-sm">{s.label}</span>
             </div>
           ))}
-        </motion.dl>
-      </div>
+        </div>
+      </motion.div>
     </section>
   );
 }

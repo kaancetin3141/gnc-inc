@@ -1,4 +1,4 @@
-# GNC Sunucu Komutları — v4.0 (PostgreSQL Edisyonu)
+# GNC Sunucu Komutları — v5.0 (PostgreSQL Edisyonu + Otomatik Komutlar)
 
 > Bu dosya, **gnc-inc** deposunda tutulan deploy dosyalarının referans rehberidir.
 > Tüm ekosistemin kaynak doğruluğu bu depodur (`deploy/`).
@@ -24,10 +24,33 @@ Her sistem **kendi PostgreSQL veritabanına** sahiptir ve yalnızca kendi kullan
 (`*_user`) erişebilir. Randevu, verisini ERP'nin public API'sinden okur (kendi DB'si
 tasarımsal olarak yoktur). PetGuardian ve GridPop istemci taraflı depolamalıdır.
 
-## İlk Kurulum
+## İlk Kurulum — TAM OTOMATİK
 
+### Sıfır bir sunucuda (tek komut)
+```bash
+curl -fsSL https://raw.githubusercontent.com/kaancetin3141/gnc-inc/main/deploy/hazirlik.sh | sudo bash
+```
+Bu komut: git'i kurar → gnc-inc'i klonlar → `kurulum.sh`'ı çalıştırır → PostgreSQL 17,
+8 servis, nginx, SSL ve yedekleme cron'u dahil HER ŞEY hazır olur.
+
+### Depo elde mevcutsa
 ```bash
 sudo bash deploy/kurulum.sh          # her şey: PG, 8 servis, nginx, SSL, yedek cron
+```
+
+## Otomatik Operasyon Komutları (v5.0)
+
+```bash
+sudo bash deploy/servis.sh durum          # renkli durum tablosu (8 servis, port, uptime)
+sudo bash deploy/servis.sh baslat         # tümünü başlat
+sudo bash deploy/servis.sh durdur         # tümünü durdur
+sudo bash deploy/servis.sh yeniden         # tümünü yeniden başlat
+sudo bash deploy/servis.sh loglar          # tümünün son logları
+sudo bash deploy/servis.sh loglar gnc-erp  # tek servisin canlı logu
+sudo bash deploy/servis.sh saglik         # HTTP testi + yanıt süresi (ms)
+
+sudo bash deploy/guncelle.sh              # tüm ekosistem: git pull + build + restart
+sudo bash deploy/guncelle.sh gnc-erp      # tek servisi güncelle
 ```
 
 ## Günlük Operasyon
@@ -66,6 +89,9 @@ cd /opt/gnc/gnc-inc && bun run db:push
 
 ## Bir Uygulamayı Güncelleme
 
+**Otomatik:** `sudo bash deploy/guncelle.sh <uygulama>`
+
+**Manuel:**
 ```bash
 cd /opt/gnc/<uygulama>
 git pull

@@ -14,11 +14,12 @@ import {
 } from "@/components/ui/sheet";
 import { serviceUrl, SITE } from "@/lib/site-config";
 
+// Meta.com navigasyon dili: kısa, kategorik, sağa yaslı
 const NAV = [
-  { href: "#sistemler", label: "Sistemler" },
   { href: "#projeler", label: "Projeler" },
+  { href: "#sistemler", label: "Sistemler" },
   { href: "#hizmetler", label: "Hizmetler" },
-  { href: "#hakkimizda", label: "Hakkımızda" },
+  { href: "#hakkimizda", label: "Şirket" },
   { href: "#iletisim", label: "İletişim" },
 ];
 
@@ -69,6 +70,7 @@ function ThemeToggle() {
 }
 
 export function SiteHeader() {
+  // Meta header'ı her zaman katıdır (cam efekti YOK); scroll'da sadece saç-teli gölge eklenir
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -83,32 +85,37 @@ export function SiteHeader() {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${
-        scrolled
-          ? "glass border-b border-border/70 shadow-sm"
-          : "bg-transparent border-b border-transparent"
+      className={`sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur-sm transition-shadow duration-300 ${
+        scrolled ? "shadow-[0_1px_12px_oklch(0.14_0.012_175/8%)]" : ""
       }`}
     >
       <div className="section-x flex h-16 items-center justify-between gap-4">
         <Logo />
 
+        {/* Meta dili: nav ortaya-hizalı, sade metin, hover'da yumuşak zemin */}
         <nav className="hidden md:flex items-center gap-1" aria-label="Ana menü">
           {NAV.map((n) => (
             <a
               key={n.href}
               href={n.href}
-              className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="rounded-full px-3.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               {n.label}
             </a>
           ))}
         </nav>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Button asChild size="sm" className="hidden sm:inline-flex">
+          {/* Meta'nın sağdaki küçük yuvarlak aksiyon butonu */}
+          <Button
+            asChild
+            size="sm"
+            className="hidden rounded-full px-4 sm:inline-flex"
+            variant="default"
+          >
             <a href={serviceUrl({ port: 3001, prodDomain: "crm.gncinc.online" })}>
-              GNC ERP&apos;ye Gir
+              ERP Girişi
               <ArrowUpRight className="size-3.5" />
             </a>
           </Button>
@@ -128,20 +135,20 @@ export function SiteHeader() {
                   <a
                     key={n.href}
                     href={n.href}
-                    className="rounded-lg px-3 py-3 text-base font-medium text-foreground/90 transition-colors hover:bg-accent"
+                    className="rounded-full px-3 py-3 text-base font-medium text-foreground/90 transition-colors hover:bg-accent"
                   >
                     {n.label}
                   </a>
                 ))}
                 <a
                   href={serviceUrl({ port: 3001, prodDomain: "crm.gncinc.online" })}
-                  className="mt-3 rounded-lg bg-primary px-3 py-3 text-center text-sm font-semibold text-primary-foreground"
+                  className="mt-3 rounded-full bg-primary px-3 py-3 text-center text-sm font-semibold text-primary-foreground"
                 >
-                  GNC ERP&apos;ye Gir
+                  ERP Girişi
                 </a>
                 <a
                   href={`mailto:${SITE.email}`}
-                  className="rounded-lg px-3 py-3 text-sm text-muted-foreground"
+                  className="rounded-full px-3 py-3 text-sm text-muted-foreground"
                 >
                   {SITE.email}
                 </a>

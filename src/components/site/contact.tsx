@@ -9,6 +9,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Reveal } from "./reveal";
 import { SITE } from "@/lib/site-config";
 
+const QUICK_LINKS = [
+  { icon: Mail, label: SITE.email, href: `mailto:${SITE.email}` },
+  { icon: Github, label: "GitHub — kaancetin3141", href: SITE.github, external: true },
+  { icon: MapPin, label: "İstanbul, Türkiye", href: null as unknown as string, static: true },
+];
+
 export function Contact() {
   const [sending, setSending] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
@@ -38,84 +44,55 @@ export function Contact() {
   }
 
   return (
-    <section id="iletisim" className="section-x py-20 sm:py-24">
-      <Reveal className="mx-auto max-w-2xl text-center">
-        <h2 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">
-          İletişime Geçin
-        </h2>
-        <p className="mt-3 text-pretty text-muted-foreground">
-          Proje teklifi, iş birliği ya da sadece merak — formu doldurun, mesajınız doğrudan
-          veritabanımıza düşsün.
-        </p>
-      </Reveal>
-
-      <div className="mt-10 grid gap-6 lg:grid-cols-5">
-        {/* Bilgi kartları */}
+    <section id="iletisim" className="ink border-t-0 py-16 sm:py-24">
+      <div className="section-x grid gap-12 lg:grid-cols-5 lg:gap-16">
+        {/* Sol: başlık + hızlı bağlantılar — Meta footer dili */}
         <Reveal className="lg:col-span-2">
-          <div className="flex h-full flex-col gap-3">
-            <a
-              href={`mailto:${SITE.email}`}
-              className="group flex items-center gap-4 rounded-2xl border border-border/80 bg-card/60 p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40"
-            >
-              <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <Mail className="size-4.5" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">E-posta</p>
-                <p className="truncate text-sm text-muted-foreground group-hover:text-primary">
-                  {SITE.email}
-                </p>
-              </div>
-            </a>
+          <p className="ink-muted text-xs font-semibold uppercase tracking-[0.18em]">
+            İletişim
+          </p>
+          <h2 className="mt-3 text-balance text-3xl font-bold tracking-tight sm:text-4xl">
+            Bir sonraki ürününüzü birlikte konuşalım.
+          </h2>
+          <p className="ink-muted mt-4 max-w-sm text-pretty leading-relaxed">
+            Proje teklifi, iş birliği ya da sadece merak — mesajınız doğrudan veritabanımıza
+            düşer ve mesai saatlerinde ortalama 2 saat içinde yanıt alırsınız.
+          </p>
 
-            <a
-              href={SITE.github}
-              target="_blank"
-              rel="noreferrer"
-              className="group flex items-center gap-4 rounded-2xl border border-border/80 bg-card/60 p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40"
-            >
-              <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <Github className="size-4.5" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold">GitHub</p>
-                <p className="text-sm text-muted-foreground group-hover:text-primary">
-                  Tüm ürünler açık kaynak
-                </p>
-              </div>
-            </a>
-
-            <div className="flex items-center gap-4 rounded-2xl border border-border/80 bg-card/60 p-5">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <MapPin className="size-4.5" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold">Konum</p>
-                <p className="text-sm text-muted-foreground">İstanbul, Türkiye</p>
-              </div>
-            </div>
-
-            <div className="flex flex-1 items-end rounded-2xl border border-primary/25 bg-primary/5 p-5">
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-primary">Hızlı yanıt sözü:</span>{" "}
-                Mesai saatlerinde ortalama yanıt süresi 2 saattir. Acil sunucu sorunlarında
-                doğrudan e-posta konusuna <span className="font-mono">[ACİL]</span> yazmanız
-                yeterli.
-              </p>
-            </div>
-          </div>
+          <ul className="mt-8 space-y-4">
+            {QUICK_LINKS.map((q) => (
+              <li key={q.label}>
+                {q.href && !q.static ? (
+                  <a
+                    href={q.href}
+                    target={q.external ? "_blank" : undefined}
+                    rel={q.external ? "noreferrer" : undefined}
+                    className="meta-link inline-flex items-center gap-3 text-sm"
+                  >
+                    <span className="flex size-8 items-center justify-center rounded-full border border-white/15">
+                      <q.icon className="size-3.5" />
+                    </span>
+                    {q.label}
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-3 text-sm">
+                    <span className="flex size-8 items-center justify-center rounded-full border border-white/15">
+                      <q.icon className="size-3.5" />
+                    </span>
+                    <span className="ink-muted">{q.label}</span>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
         </Reveal>
 
-        {/* Form */}
-        <Reveal delay={0.08} className="lg:col-span-3">
-          <form
-            onSubmit={onSubmit}
-            className="rounded-2xl border border-border/80 bg-card/60 p-6 sm:p-8"
-            aria-label="İletişim formu"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label htmlFor="ct-name" className="text-xs font-medium text-muted-foreground">
+        {/* Sağ: form — Meta sadeliği, çerçeve YOK, alt çizgili input'lar */}
+        <Reveal delay={0.1} className="lg:col-span-3">
+          <form onSubmit={onSubmit} aria-label="İletişim formu" className="max-w-xl">
+            <div className="grid gap-6 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label htmlFor="ct-name" className="ink-muted text-xs font-medium">
                   İsim *
                 </label>
                 <Input
@@ -126,10 +103,11 @@ export function Contact() {
                   placeholder="Adınız Soyadınız"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="border-0 border-b border-white/20 bg-transparent px-0 rounded-none text-base focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-white/30 h-10"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label htmlFor="ct-email" className="text-xs font-medium text-muted-foreground">
+              <div className="space-y-2">
+                <label htmlFor="ct-email" className="ink-muted text-xs font-medium">
                   E-posta *
                 </label>
                 <Input
@@ -140,12 +118,13 @@ export function Contact() {
                   placeholder="ornek@firma.com"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="border-0 border-b border-white/20 bg-transparent px-0 rounded-none text-base focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-white/30 h-10"
                 />
               </div>
             </div>
 
-            <div className="mt-4 space-y-1.5">
-              <label htmlFor="ct-subject" className="text-xs font-medium text-muted-foreground">
+            <div className="mt-6 space-y-2">
+              <label htmlFor="ct-subject" className="ink-muted text-xs font-medium">
                 Konu
               </label>
               <Input
@@ -154,11 +133,12 @@ export function Contact() {
                 placeholder="Örn: Özel yazılım projesi"
                 value={form.subject}
                 onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                className="border-0 border-b border-white/20 bg-transparent px-0 rounded-none text-base focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-white/30 h-10"
               />
             </div>
 
-            <div className="mt-4 space-y-1.5">
-              <label htmlFor="ct-message" className="text-xs font-medium text-muted-foreground">
+            <div className="mt-6 space-y-2">
+              <label htmlFor="ct-message" className="ink-muted text-xs font-medium">
                 Mesaj *
               </label>
               <Textarea
@@ -168,13 +148,18 @@ export function Contact() {
                 maxLength={4000}
                 rows={5}
                 placeholder="Projenizden, ihtiyacınızdan bahsedin…"
-                className="resize-none"
+                className="resize-none border-0 border-b border-white/20 bg-transparent px-0 rounded-none text-base focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-white/30"
                 value={form.message}
                 onChange={(e) => setForm({ ...form, message: e.target.value })}
               />
             </div>
 
-            <Button type="submit" size="lg" disabled={sending} className="mt-6 w-full sm:w-auto">
+            <Button
+              type="submit"
+              size="lg"
+              disabled={sending}
+              className="mt-8 rounded-full bg-[oklch(0.97_0.004_168)] px-7 text-[oklch(0.14_0.012_175)] hover:bg-[oklch(0.97_0.004_168)]/85"
+            >
               {sending ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
