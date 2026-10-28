@@ -1,8 +1,79 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Github, Mail } from "lucide-react";
+import { toast } from "sonner";
+import { Github, Loader2, Mail } from "lucide-react";
 import { SERVICES, SITE, serviceUrl } from "@/lib/site-config";
+
+/** Meta.com footer'ındaki bülten bloğu: başlık + e-posta + kaydol */
+function NewsletterForm() {
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (sending) return;
+    setSending(true);
+    try {
+      const res = await fetch("/api/newsletter", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, source: "footer" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        toast.error(data?.error ?? "Kayıt alınamadı.");
+        return;
+      }
+      toast.success("Kaydoldunuz! Yeni sürümlerden ilk siz haberdar olacaksınız.");
+      setEmail("");
+    } catch {
+      toast.error("Bağlantı hatası. Lütfen tekrar deneyin.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      aria-label="Bülten kayıt formu"
+      className="max-w-md"
+    >
+      <p className="text-sm font-semibold tracking-tight">
+        GNC&apos;den haberler ve güncellemeler alın
+      </p>
+      <div className="mt-3 flex items-center gap-2">
+        <input
+          type="email"
+          required
+          maxLength={120}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="E-posta adresiniz"
+          aria-label="E-posta adresiniz"
+          className="h-10 w-full min-w-0 rounded-full border border-border bg-background px-4 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus-visible:border-primary"
+        />
+        <button
+          type="submit"
+          disabled={sending}
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition-opacity hover:opacity-85 disabled:opacity-60"
+        >
+          {sending ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            "Kaydol"
+          )}
+        </button>
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+        Yeni sürümler, ürün duyuruları ve altyapı notları — ayda en fazla bir e-posta,
+        istediğinizde tek tıkla ayrılın.
+      </p>
+    </form>
+  );
+}
 
 /** Meta.com footer dili: açık gri zemin, kalın kolon başlıkları, küçük gri linkler */
 export function SiteFooter() {
@@ -22,6 +93,10 @@ export function SiteFooter() {
 
   return (
     <footer className="mt-auto border-t border-border bg-muted/50">
+      {/* Bülten — Meta'nın footer üstündeki kayıt bloğu */}
+      <div className="section-x border-b border-border/70 pt-10">
+        <NewsletterForm />
+      </div>
       <div className="section-x py-14">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-12 lg:gap-8">
           {/* Marka — Meta'nın sol geniş bloğu */}

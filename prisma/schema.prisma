@@ -42,3 +42,13 @@ model ContactMessage {
 
   @@map("contact_messages")
 }
+
+// Bülten aboneleri — footer'daki "GNC'den haberler alın" formu
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  source    String   @default("footer") // kayıt noktası: footer | api | ...
+  createdAt DateTime @default(now())
+
+  @@map("newsletter_subscribers")
+}

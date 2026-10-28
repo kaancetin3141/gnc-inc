@@ -1,11 +1,13 @@
 import { db } from "@/lib/db";
 import { SiteHeader } from "@/components/site/site-header";
 import { Hero } from "@/components/site/hero";
+import { QuickLinks } from "@/components/site/quick-links";
 import { LiveStatus } from "@/components/site/live-status";
 import { Projects, type ProjectData } from "@/components/site/projects";
 import { ServicesSection } from "@/components/site/services";
 import { TechMarquee } from "@/components/site/tech-marquee";
 import { About } from "@/components/site/about";
+import { News } from "@/components/site/news";
 import { Contact } from "@/components/site/contact";
 import { SiteFooter } from "@/components/site/site-footer";
 
@@ -41,20 +43,22 @@ export default async function Home() {
   const projects = await getProjects();
 
   /*
-   * Meta.com akışı: sticky header → tam ekran koyu hero → dönüşümlü ürün
-   * vitrinleri → canlı durum → hizmetler → teknoloji şeridi → şirket →
-   * koyu iletişim → çok kolonlu footer.
+   * Meta.com akışı: sticky header → tam ekran koyu hero → ürün hızlı-linkleri →
+   * dönüşümlü ürün vitrinleri → canlı durum → hizmetler → teknoloji şeridi →
+   * şirket → haber kartları → koyu iletişim → bülten + çok kolonlu footer.
    */
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
       <main className="flex-1">
         <Hero />
+        <QuickLinks />
         <Projects projects={projects} />
         <LiveStatus />
         <ServicesSection />
         <TechMarquee />
         <About />
+        <News />
         <Contact />
       </main>
       <SiteFooter />
