@@ -1,0 +1,622 @@
+     1→/**
+     2→ * GNC Randevu — Müşteri Sitesi mini-servisi
+     3→ * Port: 3002 (hardcode — gateway kuralı, env okunmaz)
+     4→ *
+     5→ * - Ana uygulamadan (http://localhost:3000) SERVER-SIDE fetch ile veri çeker
+     6→ * - Tarayıcıya sadece kendi same-origin /api/* uçlarını açar (CORS yok)
+     7→ * - 60 sn memory-cache (işletme listesi), 10 sn (slotlar), 60 sn (detay)
+     8→ * - BASE_DOMAIN env tanımlıysa {slug}.BASE_DOMAIN Host başlığıyla alt alan adı desteği
+     9→ * - Build adımı yok: HTML/CSS/JS views.ts içinde template string olarak gömülü
+    10→ */
+    11→
+    12→import {
+    13→  STYLE_CSS,
+    14→  HOME_JS,
+    15→  DETAIL_JS,
+    16→  MEMBER_JS,
+    17→  homePage,
+    18→  detailPage,
+    19→  memberPage,
+    20→  notFoundPage,
+    21→  serverErrorPage,
+    22→  type Json,
+    23→} from './views.ts';
+    24→
+    25→const PORT = 3002;
+    26→const UPSTREAM = 'http://localhost:3000';
+    27→// Alt alan adı anahtarı: örn. BASE_DOMAIN=randevu.example.com → sik-kuafor.randevu.example.com
+    28→const BASE_DOMAIN = (process.env.BASE_DOMAIN || '').trim().toLowerCase();
+    29→// Sistem alt alan adları — işletme slug'ı OLAMAZ (yoksa randevu.alanadi ana liste
+    30→// yerine "işletme bulunamadı" gösterirdi — sunucuda tespit edilen bug, v1.4)
+    31→const RESERVED_SLUGS = new Set([
+    32→  'randevu', 'www', 'crm', 'app', 'admin', 'api', 'ana', 'panel', 'mail', 'ftp', 'ns1', 'ns2',
+    33→]);
+    34→
+    35→// ---------------------------------------------------------------- bellek cache
+    36→
+    37→type Entry = { expires: number; data: Json };
+    38→const mem = new Map<string, Entry>();
+    39→
+    40→function cacheGet(key: string): Json | null {
+    41→  const e = mem.get(key);
+    42→  if (!e) return null;
+    43→  if (Date.now() > e.expires) {
+    44→    mem.delete(key);
+    45→    return null;
+    46→  }
+    47→  return e.data;
+    48→}
+    49→
+    50→function cacheSet(key: string, data: Json, ttlMs: number) {
+    51→  mem.set(key, { expires: Date.now() + ttlMs, data });
+    52→  if (mem.size > 200) {
+    53→    const now = Date.now();
+    54→    for (const [k, v] of mem) if (now > v.expires) mem.delete(k);
+    55→  }
+    56→}
+    57→
+    58→// ---------------------------------------------------------------- upstream
+    59→
+    60→class UpstreamError extends Error {}
+    61→
+    62→async function upstream(path: string, init?: RequestInit & { timeoutMs?: number }) {
+    63→  const timeoutMs = init?.timeoutMs ?? 8000;
+    64→  const ctrl = new AbortController();
+    65→  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    66→  try {
+    67→    const res = await fetch(UPSTREAM + path, {
+    68→      ...init,
+    69→      signal: ctrl.signal,
+    70→      headers: { accept: 'application/json', ...(init?.headers || {}) },
+    71→    });
+    72→    const text = await res.text();
+    73→    let data: any = null;
+    74→    try {
+    75→      data = JSON.parse(text);
+    76→    } catch {
+    77→      data = null;
+    78→    }
+    79→    return { ok: res.ok, status: res.status, data };
+    80→  } catch {
+    81→    return { ok: false, status: 502, data: null as any };
+    82→  } finally {
+    83→    clearTimeout(timer);
+    84→  }
+    85→}
+    86→
+    87→// ---------------------------------------------------------------- normalizasyon + filtre
+    88→
+    89→function normBiz(it: Json): Json {
+    90→  return {
+    91→    id: it.id ?? '',
+    92→    slug: it.slug ?? '',
+    93→    name: it.name ?? '',
+    94→    type: it.type ?? '',
+    95→    address: it.address ?? '',
+    96→    city: it.city ?? '',
+    97→    district: it.district ?? '',
+    98→    photo: it.photo ?? null,
+    99→    about: typeof it.about === 'string' ? it.about : null,
+   100→    phone: it.phone ?? '',
+   101→    email: it.email ?? '',
+   102→    lat: typeof it.lat === 'number' && !isNaN(it.lat) ? it.lat : it.lat != null && !isNaN(Number(it.lat)) ? Number(it.lat) : null,
+   103→    lng: typeof it.lng === 'number' && !isNaN(it.lng) ? it.lng : it.lng != null && !isNaN(Number(it.lng)) ? Number(it.lng) : null,
+   104→    workingHours: it.workingHours && typeof it.workingHours === 'object' ? it.workingHours : {},
+   105→    services: Array.isArray(it.services) ? it.services : [],
+   106→    // değerlendirme özeti (ana sayfa kartındaki ★ rozeti)
+   107→    ratingAvg: typeof it.ratingAvg === 'number' ? it.ratingAvg : 0,
+   108→    ratingCount: typeof it.ratingCount === 'number' ? it.ratingCount : 0,
+   109→  };
+   110→}
+   111→
+   112→const trLower = (s: unknown) => String(s ?? '').toLocaleLowerCase('tr');
+   113→
+   114→function filterBiz(items: Json[], q: string, type: string, city: string): Json[] {
+   115→  const nq = trLower(q.trim());
+   116→  return items.filter((b) => {
+   117→    if (type && b.type !== type) return false;
+   118→    if (city && b.city !== city) return false;
+   119→    if (nq) {
+   120→      const svcNames = (b.services as Json[]).map((s) => trLower(s.name)).join(' ');
+   121→      const hay = trLower([b.name, b.address, b.district, b.city].join(' ') + ' ' + svcNames);
+   122→      if (!hay.includes(nq)) return false;
+   123→    }
+   124→    return true;
+   125→  });
+   126→}
+   127→
+   128→async function getBusinesses(): Promise<Json[]> {
+   129→  const hit = cacheGet('businesses');
+   130→  if (hit && Array.isArray(hit.items)) return hit.items;
+   131→  const r = await upstream('/api/public/providers');
+   132→  if (!r.ok || !r.data || !Array.isArray(r.data.items)) {
+   133→    throw new UpstreamError('İşletme listesi şu anda alınamıyor — ana uygulama yanıt vermiyor olabilir. Birkaç saniye sonra tekrar dene.');
+   134→  }
+   135→  const items = (r.data.items as Json[]).map(normBiz);
+   136→  cacheSet('businesses', { items }, 60_000);
+   137→  return items;
+   138→}
+   139→
+   140→// 404 öneri sıralaması: arama terimi işletme ADI yanında HİZMET adı/etiketinde de
+   141→// aranır; hizmet eşleşmesi en güçlü sinyaldir ("manik" → Manikür hizmetli kuaför).
+   142→// Eşleşen hizmet adı _svcMatch alanına yazılır (arayüzde chip olarak gösterilir).
+   143→function rankSuggestions(items: Json[], q: string, excludeSlug?: string, limit = 6): Json[] {
+   144→  const term = trLower(q).trim().slice(0, 64);
+   145→  const pool = excludeSlug ? items.filter((b) => b.slug !== excludeSlug) : items;
+   146→  if (!term) return pool.slice(0, limit);
+   147→  const scored = pool.map((b) => {
+   148→    let score = 0;
+   149→    let svcMatch = '';
+   150→    const services = Array.isArray(b.services) ? (b.services as Json[]) : [];
+   151→    for (const sv of services) {
+   152→      const nm = trLower(sv.name);
+   153→      const cat = trLower(sv.category);
+   154→      if (nm === term) { score = Math.max(score, 100); svcMatch = String(sv.name || ''); break; }
+   155→      if (nm.includes(term)) { score = Math.max(score, 60); if (!svcMatch) svcMatch = String(sv.name || ''); }
+   156→      else if (cat && (cat === term || cat.includes(term))) { score = Math.max(score, 40); if (!svcMatch) svcMatch = String(sv.category || ''); }
+   157→    }
+   158→    if (trLower(b.name).includes(term)) score += 30;
+   159→    const hay = trLower([b.address, b.district, b.city, b.type].join(' '));
+   160→    if (hay.includes(term)) score += 10;
+   161→    return { b, score, svcMatch };
+   162→  });
+   163→  scored.sort((x, y) => y.score - x.score);
+   164→  return scored
+   165→    .filter((x) => x.score > 0)
+   166→    .slice(0, limit)
+   167→    .map((x) => (x.svcMatch ? { ...x.b, _svcMatch: x.svcMatch } : x.b));
+   168→}
+   169→
+   170→// ---------------------------------------------------------------- yanıtlar
+   171→
+   172→const json = (data: unknown, status = 200) =>
+   173→  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
+   174→
+   175→const htmlRes = (body: string, status = 200) =>
+   176→  new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
+   177→
+   178→const assetRes = (body: string, type: string) =>
+   179→  new Response(body, { headers: { 'content-type': `${type}; charset=utf-8`, 'cache-control': 'public, max-age=300' } });
+   180→
+   181→// ---- Leaflet (self-hosted; startup'ta diske okunur)
+   182→import { readFileSync } from 'node:fs';
+   183→import { join } from 'node:path';
+   184→const LEAFLET_DIR = join(import.meta.dir, 'assets', 'leaflet');
+   185→const LEAFLET_FILES: Record<string, { data: string | Uint8Array; type: string }> = {};
+   186→try {
+   187→  LEAFLET_FILES['/assets/leaflet/leaflet.js'] = { data: readFileSync(join(LEAFLET_DIR, 'leaflet.js'), 'utf8'), type: 'text/javascript' };
+   188→  LEAFLET_FILES['/assets/leaflet/leaflet.css'] = { data: readFileSync(join(LEAFLET_DIR, 'leaflet.css'), 'utf8'), type: 'text/css' };
+   189→  LEAFLET_FILES['/assets/leaflet/images/marker-icon.png'] = { data: new Uint8Array(readFileSync(join(LEAFLET_DIR, 'images', 'marker-icon.png'))), type: 'image/png' };
+   190→  LEAFLET_FILES['/assets/leaflet/images/marker-icon-2x.png'] = { data: new Uint8Array(readFileSync(join(LEAFLET_DIR, 'images', 'marker-icon-2x.png'))), type: 'image/png' };
+   191→  LEAFLET_FILES['/assets/leaflet/images/marker-shadow.png'] = { data: new Uint8Array(readFileSync(join(LEAFLET_DIR, 'images', 'marker-shadow.png'))), type: 'image/png' };
+   192→} catch (e) {
+   193→  console.error('[customer-page] Leaflet varlıkları okunamadı — harita devre dışı:', (e as Error).message);
+   194→}
+   195→const leafletRes = (f: { data: string | Uint8Array; type: string }) =>
+   196→  new Response(f.data as BodyInit, { headers: { 'content-type': `${f.type}; charset=utf-8`, 'cache-control': 'public, max-age=86400' } });
+   197→
+   198→// ---- Görsel varlıkları (tur5: Apple estetiği hero/karanlık bölüm fotoğrafları)
+   199→import { readdirSync } from 'node:fs';
+   200→const IMG_DIR = join(import.meta.dir, 'assets', 'img');
+   201→const IMG_FILES: Record<string, { data: Uint8Array; type: string }> = {};
+   202→try {
+   203→  for (const f of readdirSync(IMG_DIR)) {
+   204→    if (!/\.(jpe?g|png|webp)$/i.test(f)) continue;
+   205→    const ext = f.slice(f.lastIndexOf('.') + 1).toLowerCase();
+   206→    const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+   207→    IMG_FILES['/assets/img/' + f] = { data: new Uint8Array(readFileSync(join(IMG_DIR, f))), type };
+   208→  }
+   209→} catch (e) {
+   210→  console.error('[customer-page] Görsel varlıkları okunamadı:', (e as Error).message);
+   211→}
+   212→const imgRes = (f: { data: Uint8Array; type: string }) =>
+   213→  new Response(f.data as BodyInit, { headers: { 'content-type': f.type, 'cache-control': 'public, max-age=86400' } });
+   214→
+   215→// ---------------------------------------------------------------- sayfa render
+   216→
+   217→async function renderDetail(slug: string, subdomain: boolean, gwPort?: string | null, q?: string, embed?: boolean): Promise<{ body: string; status: number }> {
+   218→  const r = await upstream(`/api/public/providers/${encodeURIComponent(slug)}`);
+   219→  if (r.status === 404) {
+   220→    // Alt alan adı modunda "tüm işletmelere dön" hedefi: randevu.ANA_DOMAIN ana liste
+   221→    const randevuHome = subdomain && BASE_DOMAIN ? `https://${listHost()}` : null;
+   222→    // Hata sayfasını zenginleştir: terim hizmet adlarında da aranır (hizmet eşleşmesi öne çıkar)
+   223→    let sugg: Json[] = [];
+   224→    try {
+   225→      const all = await getBusinesses();
+   226→      sugg = rankSuggestions(all, q || '', slug);
+   227→    } catch {
+   228→      // liste alınamadıysa önerisiz 404 gösterilir
+   229→    }
+   230→    return { body: notFoundPage(slug, gwPort, randevuHome, sugg, subdomain && BASE_DOMAIN ? BASE_DOMAIN : undefined, q), status: 404 };
+   231→  }
+   232→  if (!r.ok || !r.data || !r.data.provider) {
+   233→    throw new UpstreamError('İşletme bilgileri şu anda alınamıyor — ana uygulama yanıt vermiyor olabilir.');
+   234→  }
+   235→  const services: Json[] = Array.isArray(r.data.services) ? r.data.services : [];
+   236→  // vitrin (tur4): portföy fotoğrafları + ekip — upstream hatasına dayanıklı
+   237→  const photos: Json[] = Array.isArray(r.data.photos) ? r.data.photos : [];
+   238→  const staff: Json[] = Array.isArray(r.data.staff) ? r.data.staff : [];
+   239→  const provider = normBiz({ ...r.data.provider, services });
+   240→  // Değerlendirmeler (server-side çekilir; hata olursa bölüm boş düşer)
+   241→  let reviews: { items: Json[]; summary: Json } | null = null;
+   242→  try {
+   243→    const rr = await upstream(`/api/public/providers/${encodeURIComponent(slug)}/reviews?limit=20`);
+   244→    const rd = rr.data as Json | null;
+   245→    if (rr.ok && rd && Array.isArray(rd.items)) {
+   246→      reviews = {
+   247→        items: rd.items,
+   248→        summary: (rd.summary ?? { average: 0, count: 0, distribution: {} }) as Json,
+   249→      };
+   250→    }
+   251→  } catch {
+   252→    // değerlendirmeler olmadan da sayfa render edilir
+   253→  }
+   254→  // Gateway modunda ana sayfa bağlantısına param ekle (CRM'e düşmesin)
+   255→  // Düzeltme: "Tüm işletmeler" her zaman randevu LİSTESİNE gider (ana siteye değil)
+   256→  const homeUrl = subdomain && BASE_DOMAIN ? `https://${listHost()}` : gwq('/')
+   257→  return { body: detailPage({ provider, services, photos, staff, reviews, homeUrl, gwPort, embed }), status: 200 };
+   258→
+   259→  // BASE_DOMAIN=randevu.x biçimindeyse aynen; bare domain ise randevu. öneki ekle
+   260→  function listHost(): string {
+   261→    return BASE_DOMAIN.startsWith('randevu.') ? BASE_DOMAIN : `randevu.${BASE_DOMAIN}`;
+   262→  }
+   263→
+   264→  function gwq(p: string) {
+   265→    return gwPort ? p + (p.indexOf('?') === -1 ? '?' : '&') + 'XTransformPort=' + encodeURIComponent(gwPort) : p;
+   266→  }
+   267→}
+   268→
+   269→// ---------------------------------------------------------------- sunucu
+   270→
+   271→Bun.serve({
+   272→  port: PORT,
+   273→  idleTimeout: 30,
+   274→  async fetch(req) {
+   275→    const url = new URL(req.url);
+   276→    const path = url.pathname !== '/' ? url.pathname.replace(/\/+$/, '') : '/';
+   277→    const method = req.method.toUpperCase();
+   278→
+   279→    // Host başlığı → alt alan adı tespiti ({slug}.{BASE_DOMAIN})
+   280→    const host = (req.headers.get('host') || '').split(':')[0].trim().toLowerCase().replace(/\.$/, '');
+   281→    let subSlug: string | null = null;
+   282→    if (BASE_DOMAIN && host.length > BASE_DOMAIN.length + 1 && host.endsWith('.' + BASE_DOMAIN)) {
+   283→      const s = host.slice(0, host.length - BASE_DOMAIN.length - 1);
+   284→      if (s && !s.includes('.') && !RESERVED_SLUGS.has(s)) subSlug = s;
+   285→    }
+   286→
+   287→    try {
+   288→      // Gateway modu tespiti: önizleme paneli ?XTransformPort ile açar;
+   289→      // bu durumda göreli varlık/API URL'lerine aynı paramı ekleriz.
+   290→      const gwPort = url.searchParams.get('XTransformPort');
+   291→
+   292→      // --- sağlık kontrolü
+   293→      if (path === '/healthz') return json({ ok: true, service: 'customer-page', port: PORT, subdomainMode: !!subSlug });
+   294→
+   295→      // --- alt alan adı kökü: {slug}.BASE_DOMAIN/ → o işletmenin detay sayfası
+   296→      if (subSlug && path === '/') {
+   297→        const page = await renderDetail(subSlug, true, gwPort, url.searchParams.get('q') || undefined);
+   298→        return htmlRes(page.body, page.status);
+   299→      }
+   300→
+   301→      // --- API: işletme listesi (60 sn cache + filtre)
+   302→      if (path === '/api/businesses' && method === 'GET') {
+   303→        const q = url.searchParams.get('q') || '';
+   304→        const type = url.searchParams.get('type') || '';
+   305→        const city = url.searchParams.get('city') || '';
+   306→        const all = await getBusinesses();
+   307→        const items = filterBiz(all, q, type, city);
+   308→        const cities = [...new Set(all.map((b) => String(b.city || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
+   309→        return json({ items, cities, total: items.length });
+   310→      }
+   311→
+   312→      // --- API: işletme detayı
+   313→      const mBiz = path.match(/^\/api\/businesses\/([^/]+)$/);
+   314→      if (mBiz && method === 'GET') {
+   315→        const slug = safeDecode(mBiz[1]);
+   316→        const key = `detail:${slug}`;
+   317→        const hit = cacheGet(key);
+   318→        if (hit) return json(hit);
+   319→        const r = await upstream(`/api/public/providers/${encodeURIComponent(slug)}`);
+   320→        if (r.status === 404) return json({ error: 'Bu adda bir işletme bulamadık.' }, 404);
+   321→        if (!r.ok || !r.data || !r.data.provider) return json({ error: 'İşletme detayı şu anda alınamıyor. Birazdan tekrar dene.' }, 502);
+   322→        const services: Json[] = Array.isArray(r.data.services) ? r.data.services : [];
+   323→        const out = { provider: normBiz({ ...r.data.provider, services }), services };
+   324→        cacheSet(key, out, 60_000);
+   325→        return json(out);
+   326→      }
+   327→
+   328→      // --- API: uygun saatler
+   329→      const mSlots = path.match(/^\/api\/businesses\/([^/]+)\/slots$/);
+   330→      if (mSlots && method === 'GET') {
+   331→        const slug = safeDecode(mSlots[1]);
+   332→        const date = url.searchParams.get('date') || '';
+   333→        const serviceId = url.searchParams.get('serviceId') || '';
+   334→        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Geçerli bir tarih gerekli (YYYY-MM-DD).' }, 400);
+   335→        if (!serviceId) return json({ error: 'Hizmet (serviceId) gerekli.' }, 400);
+   336→        const key = `slots:${slug}:${date}:${serviceId}`;
+   337→        const hit = cacheGet(key);
+   338→        if (hit) return json(hit);
+   339→        const r = await upstream(
+   340→          `/api/public/providers/${encodeURIComponent(slug)}/availability?date=${encodeURIComponent(date)}&serviceId=${encodeURIComponent(serviceId)}`
+   341→        );
+   342→        if (r.status === 404) return json({ error: 'İşletme bulunamadı.' }, 404);
+   343→        if (!r.ok || !r.data) return json({ error: 'Uygun saatler şu anda alınamıyor. Birazdan tekrar dene.' }, 502);
+   344→        const out = {
+   345→          date,
+   346→          serviceId,
+   347→          workingHours: r.data.workingHours ?? null,
+   348→          slots: Array.isArray(r.data.slots) ? r.data.slots : [],
+   349→          // hızlı seçim: ilk uygun saat ("İlk uygun saat" butonu bunu kullanır)
+   350→          nextAvailable: typeof r.data.nextAvailable === 'string' ? r.data.nextAvailable : null,
+   351→          nextAvailableLabel: typeof r.data.nextAvailableLabel === 'string' ? r.data.nextAvailableLabel : null,
+   352→        };
+   353→        cacheSet(key, out, 10_000);
+   354→        return json(out);
+   355→      }
+   356→
+   357→      // --- API: üyelik proxy'si (CRM /api/public/member/* uçlarını same-origin yapar)
+   358→      // GET/HEAD okuma, POST login/register/cancel, DELETE hesap silme (KVKK) için.
+   359→      const mMember = path.match(/^\/api\/member\/(.+)$/);
+   360→      if (mMember) {
+   361→        const rest = mMember[1].replace(/\/+$/, '');
+   362→        const auth = req.headers.get('authorization');
+   363→        const headers: Record<string, string> = { accept: 'application/json' };
+   364→        if (auth) headers['authorization'] = auth;
+   365→        if (method === 'GET' || method === 'HEAD') {
+   366→          const r = await upstream('/api/public/member/' + rest, { headers });
+   367→          if (r.data) return json(r.data, r.ok ? 200 : r.status);
+   368→          return json({ error: 'Üyelik servisi şu anda yanıt vermiyor. Birazdan tekrar dene.' }, 502);
+   369→        }
+   370→        if (method !== 'POST' && method !== 'DELETE') return json({ error: 'Bu uç için GET, POST veya DELETE kullan.' }, 405);
+   371→        let mbody: Json;
+   372→        try {
+   373→          const raw = await req.text();
+   374→          mbody = (raw.trim() ? JSON.parse(raw) : {}) as Json; // gövdesiz POST (ör. cancel) kabul edilir
+   375→        } catch {
+   376→          return json({ error: 'İstek gövdesi okunamadı.' }, 400);
+   377→        }
+   378→        const r = await upstream('/api/public/member/' + rest, {
+   379→          method,
+   380→          headers: { ...headers, 'content-type': 'application/json' },
+   381→          body: JSON.stringify(mbody),
+   382→          timeoutMs: 12000,
+   383→        });
+   384→        if (r.data) return json(r.data, r.ok ? 200 : r.status);
+   385→        return json({ error: 'Üyelik servisi şu anda yanıt vermiyor. Birazdan tekrar dene.' }, 502);
+   386→      }
+   387→
+   388→      // --- API: değerlendirme proxy'si (CRM /api/public/reviews ucunu same-origin yapar)
+   389→      // POST /api/reviews                     → POST   /api/public/reviews (üye token'ı varsa Bearer iletilir)
+   390→      // GET  /api/reviews/providers/<slug>    → GET    /api/public/providers/<slug>/reviews
+   391→      if (path === '/api/reviews' && method === 'POST') {
+   392→        let rbody: Json;
+   393→        try {
+   394→          const raw = await req.text();
+   395→          rbody = (raw.trim() ? JSON.parse(raw) : {}) as Json;
+   396→        } catch {
+   397→          return json({ error: 'İstek gövdesi okunamadı.' }, 400);
+   398→        }
+   399→        const auth = req.headers.get('authorization');
+   400→        const headers: Record<string, string> = { 'content-type': 'application/json' };
+   401→        if (auth) headers['authorization'] = auth;
+   402→        const r = await upstream('/api/public/reviews', {
+   403→          method: 'POST',
+   404→          headers,
+   405→          body: JSON.stringify(rbody),
+   406→          timeoutMs: 12000,
+   407→        });
+   408→        if (r.data) return json(r.data, r.ok ? 200 : r.status);
+   409→        return json({ error: 'Değerlendirme servisi şu anda yanıt vermiyor. Birazdan tekrar dene.' }, 502);
+   410→      }
+   411→      const mRevList = path.match(/^\/api\/reviews\/providers\/([^/]+)$/);
+   412→      if (mRevList && method === 'GET') {
+   413→        const slug = safeDecode(mRevList[1]);
+   414→        const lim = url.searchParams.get('limit') || '20';
+   415→        const key = `reviews:${slug}:${lim}`;
+   416→        const hit = cacheGet(key);
+   417→        if (hit) return json(hit);
+   418→        const r = await upstream(`/api/public/providers/${encodeURIComponent(slug)}/reviews?limit=${encodeURIComponent(lim)}`);
+   419→        if (r.status === 404) return json({ error: 'İşletme bulunamadı.' }, 404);
+   420→        if (!r.ok || !r.data) return json({ error: 'Değerlendirmeler şu anda alınamıyor. Birazdan tekrar dene.' }, 502);
+   421→        // admin onayı yeni yorum yayınlandığında görünsün — kısa TTL
+   422→        cacheSet(key, r.data, 15_000);
+   423→        return json(r.data);
+   424→      }
+   425→
+   426→      // --- API: bekleme listesi proxy'si (CRM /api/public/waitlist → same-origin)
+   427→      // POST /api/waitlist → beklemeye gir (üye token'ı varsa Bearer iletilir)
+   428→      // GET  /api/waitlist?phone=  → "Bekleme Durumum" sorgusu
+   429→      // Gerçek istemci IP'si (x-forwarded-for) rate limit için taşınır —
+   430→      // aksi halde tüm müşteri sitesi istekleri tek 'unknown' kovasına düşerdi.
+   431→      if (path === '/api/waitlist') {
+   432→        const auth = req.headers.get('authorization');
+   433→        const headers: Record<string, string> = { accept: 'application/json' };
+   434→        if (auth) headers['authorization'] = auth;
+   435→        const xff = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip');
+   436→        if (xff) headers['x-forwarded-for'] = xff;
+   437→        if (method === 'GET') {
+   438→          const qs = url.searchParams.toString();
+   439→          const r = await upstream('/api/public/waitlist' + (qs ? '?' + qs : ''), { headers });
+   440→          if (r.data) return json(r.data, r.ok ? 200 : r.status);
+   441→          return json({ error: 'Bekleme durumu şu anda alınamıyor. Birazdan tekrar dene.' }, 502);
+   442→        }
+   443→        if (method !== 'POST') return json({ error: 'Bu uç için GET veya POST kullan.' }, 405);
+   444→        let wbody: Json;
+   445→        try {
+   446→          const raw = await req.text();
+   447→          wbody = (raw.trim() ? JSON.parse(raw) : {}) as Json;
+   448→        } catch {
+   449→          return json({ error: 'İstek gövdesi okunamadı.' }, 400);
+   450→        }
+   451→        const r = await upstream('/api/public/waitlist', {
+   452→          method: 'POST',
+   453→          headers: { ...headers, 'content-type': 'application/json' },
+   454→          body: JSON.stringify(wbody),
+   455→          timeoutMs: 12000,
+   456→        });
+   457→        // 201 (oluştu) dahil olmak üzere status aynen iletilir
+   458→        if (r.data) return json(r.data, r.status);
+   459→        return json({ error: 'Bekleme servisi şu anda yanıt vermiyor. Birazdan tekrar dene.' }, 502);
+   460→      }
+   461→
+   462→      // --- API: damga kartı proxy'si (CRM /api/public/stampcard → same-origin)
+   463→      // GET /api/stampcard — üyenin damga kartları (Bearer token iletilir;
+   464→      // /api/reviews proxy deseni). Kartlar yalnız aktif damga programı
+   465→      // olan işletmeler için döner.
+   466→      if (path === '/api/stampcard' && method === 'GET') {
+   467→        const auth = req.headers.get('authorization');
+   468→        const headers: Record<string, string> = { accept: 'application/json' };
+   469→        if (auth) headers['authorization'] = auth;
+   470→        const r = await upstream('/api/public/stampcard', { headers });
+   471→        if (r.data) return json(r.data, r.ok ? 200 : r.status);
+   472→        return json({ error: 'Damga kartların şu anda alınamıyor. Birazdan tekrar dene.' }, 502);
+   473→      }
+   474→
+   475→      // --- API: ICS takvim dosyası proxy'si (CRM /api/public/appointments/ics → same-origin)
+   476→      // "📅 Takvime ekle" butonları bu ucu kullanır: ?code=XXXXXXXX (misafir) ya da
+   477→      // ?id=<appointmentId> + Authorization: Bearer (üye). Token varsa upstream'e
+   478→      // iletilir; gerçek istemci IP'si (x-forwarded-for) rate limit için taşınır.
+   479→      // text/calendar yanıtı olduğu gibi (Content-Disposition dahil) aktarılır;
+   480→      // JSON hataları (400/401/404/409/429) status koduyla iletilir.
+   481→      if (path === '/api/appointments/ics' && method === 'GET') {
+   482→        const qs = url.searchParams.toString();
+   483→        const fwdHeaders: Record<string, string> = { accept: 'text/calendar, application/json' };
+   484→        const auth = req.headers.get('authorization');
+   485→        if (auth) fwdHeaders['authorization'] = auth;
+   486→        const xff = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip');
+   487→        if (xff) fwdHeaders['x-forwarded-for'] = xff;
+   488→        try {
+   489→          const ctrl = new AbortController();
+   490→          const timer = setTimeout(() => ctrl.abort(), 8000);
+   491→          const res = await fetch(UPSTREAM + '/api/public/appointments/ics' + (qs ? '?' + qs : ''), {
+   492→            headers: fwdHeaders,
+   493→            signal: ctrl.signal,
+   494→          });
+   495→          clearTimeout(timer);
+   496→          const ct = res.headers.get('content-type') || '';
+   497→          if (ct.includes('text/calendar')) {
+   498→            const body = await res.text();
+   499→            return new Response(body, {
+   500→              status: res.status,
+   501→              headers: {
+   502→                'content-type': 'text/calendar; charset=utf-8',
+   503→                'content-disposition':
+   504→                  res.headers.get('content-disposition') || 'attachment; filename="randevu.ics"',
+   505→                'cache-control': 'no-store',
+   506→              },
+   507→            });
+   508→          }
+   509→          // hata yanıtı: JSON (404/429/400/…) — olduğu gibi aktar
+   510→          let data: Json | null = null;
+   511→          try {
+   512→            data = (await res.json()) as Json;
+   513→          } catch {
+   514→            data = null;
+   515→          }
+   516→          return json(data ?? { error: 'Takvim dosyası alınamadı.' }, res.status);
+   517→        } catch {
+   518→          return json({ error: 'Takvim servisi şu anda yanıt vermiyor. Birazdan tekrar dene.' }, 502);
+   519→        }
+   520→      }
+   521→
+   522→      // --- API: randevu oluştur (upstream'e ilet)
+   523→      if (path === '/api/book') {
+   524→        if (method !== 'POST') return json({ success: false, error: 'Bu uç için POST kullan.' }, 405);
+   525→        let body: Json;
+   526→        try {
+   527→          body = (await req.json()) as Json;
+   528→        } catch {
+   529→          return json({ success: false, error: 'İstek gövdesi okunamadı.' }, 400);
+   530→        }
+   531→        const required: Array<keyof Json> = ['providerSlug', 'serviceId', 'date', 'time', 'customerName', 'customerPhone'];
+   532→        const missing = required.filter((k) => !body[k] || typeof body[k] !== 'string' || !String(body[k]).trim());
+   533→        if (missing.length) {
+   534→          return json({ success: false, error: 'Lütfen hizmet, tarih, saat, ad ve telefon bilgilerini eksiksiz doldur.' }, 400);
+   535→        }
+   536→        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.date))) {
+   537→          return json({ success: false, error: 'Tarih biçimi geçersiz.' }, 400);
+   538→        }
+   539→        const r = await upstream('/api/public/appointments', {
+   540→          method: 'POST',
+   541→          headers: { 'content-type': 'application/json' },
+   542→          body: JSON.stringify(body),
+   543→          timeoutMs: 12000,
+   544→        });
+   545→        if (r.ok && r.data) return json({ success: true, data: r.data });
+   546→        if (r.data && typeof r.data.error === 'string') {
+   547→          const status = [400, 401, 403, 404, 409, 422].includes(r.status) ? r.status : 400;
+   548→          return json({ success: false, error: r.data.error }, status);
+   549→        }
+   550→        return json({ success: false, error: 'Randevu servisi şu anda yanıt vermiyor. Lütfen birkaç saniye sonra tekrar dene.' }, 502);
+   551→      }
+   552→
+   553→      // --- sayfalar
+   554→      if (path === '/' && method === 'GET') return htmlRes(homePage(BASE_DOMAIN, gwPort));
+   555→      if (path === '/uyelik' && method === 'GET') return htmlRes(memberPage(BASE_DOMAIN, gwPort));
+   556→
+   557→      const mDetail = path.match(/^\/isletme\/([^/]+)$/);
+   558→      if (mDetail && method === 'GET') {
+   559→        const slug = safeDecode(mDetail[1]);
+   560→        // ?embed=1 → siteye göm modu (iframe içi kompakt: nav/footer gizli)
+   561→        const embed = url.searchParams.get('embed') === '1';
+   562→        const page = await renderDetail(slug, false, gwPort, url.searchParams.get('q') || undefined, embed);
+   563→        return htmlRes(page.body, page.status);
+   564→      }
+   565→
+   566→      // --- 🔗 siteye göm (widget) — işletmelerin kendi sitelerine eklediği
+   567→      // iframe kaynağı: /widget/:slug → detail sayfasının çerçevesiz hâli.
+   568→      // Aynı kamu randevu API'lerini kullanır (ek saldırı yüzeyi yok).
+   569→      const mWidget = path.match(/^\/widget\/([^/]+)$/);
+   570→      if (mWidget && method === 'GET') {
+   571→        const slug = safeDecode(mWidget[1]);
+   572→        const page = await renderDetail(slug, false, gwPort, undefined, true);
+   573→        return htmlRes(page.body, page.status);
+   574→      }
+   575→
+   576→      // --- gömülü varlıklar
+   577→      if (path === '/assets/style.css' && method === 'GET') return assetRes(STYLE_CSS, 'text/css');
+   578→      if (path === '/assets/home.js' && method === 'GET') return assetRes(HOME_JS, 'text/javascript');
+   579→      if (path === '/assets/detail.js' && method === 'GET') return assetRes(DETAIL_JS, 'text/javascript');
+   580→      if (path === '/assets/member.js' && method === 'GET') return assetRes(MEMBER_JS, 'text/javascript');
+   581→
+   582→      // --- leaflet varlıkları (self-hosted harita kütüphanesi)
+   583→      const lf = LEAFLET_FILES[path];
+   584→      if (lf && (method === 'GET' || method === 'HEAD')) return leafletRes(lf);
+   585→
+   586→      // --- gömülü görsel varlıkları (tur5)
+   587→      const im = IMG_FILES[path];
+   588→      if (im && (method === 'GET' || method === 'HEAD')) return imgRes(im);
+   589→
+   590→      // Bilinmeyen sayfa: önerili 404 — ?q= terimi hizmet adlarında da aranır
+   591→      const nfq = (url.searchParams.get('q') || '').trim();
+   592→      let sugg: Json[] = [];
+   593→      try {
+   594→        sugg = rankSuggestions(await getBusinesses(), nfq);
+   595→      } catch {
+   596→        // öneri alınamadı
+   597→      }
+   598→      return htmlRes(notFoundPage(undefined, gwPort, null, sugg, subSlug && BASE_DOMAIN ? BASE_DOMAIN : undefined, nfq || undefined), 404);
+   599→    } catch (e: any) {
+   600→      const isUp = e instanceof UpstreamError;
+   601→      console.error(`[customer-page] ${method} ${path} →`, isUp ? e.message : e?.message || e);
+   602→      return htmlRes(
+   603→        serverErrorPage(isUp ? e.message : 'Beklenmeyen bir sorun oluştu. Lütfen sayfayı yenile.', url.searchParams.get('XTransformPort')),
+   604→        isUp ? 502 : 500
+   605→      );
+   606→    }
+   607→  },
+   608→});
+   609→
+   610→function safeDecode(s: string): string {
+   611→  try {
+   612→    return decodeURIComponent(s);
+   613→  } catch {
+   614→    return s;
+   615→  }
+   616→}
+   617→
+   618→console.log(
+   619→  `🍉 GNC Randevu müşteri sitesi çalışıyor — http://localhost:${PORT}` +
+   620→    (BASE_DOMAIN ? ` (alt alan adı modu: *.${BASE_DOMAIN})` : ' (alt alan adı kapalı — BASE_DOMAIN env tanımlı değil)')
+   621→);
+   622→

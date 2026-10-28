@@ -1,0 +1,1194 @@
+     1→"use strict";
+     2→/* Cubiq — ekran yönetimi, girdi, ses, haptik, zamanlayıcı ve başlatma */
+     3→
+     4→const Sfx = (() => {
+     5→  let ac = null;
+     6→  let muted = DB.get("cubiq.mute", "0") === "1";
+     7→
+     8→  function ctx() {
+     9→    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    10→    if (ac.state === "suspended") ac.resume();
+    11→    return ac;
+    12→  }
+    13→
+    14→  function tone(freq, delay, dur, type, vol) {
+    15→    const a = ctx();
+    16→    const o = a.createOscillator();
+    17→    const g = a.createGain();
+    18→    o.type = type;
+    19→    o.frequency.value = freq;
+    20→    const t0 = a.currentTime + delay;
+    21→    g.gain.setValueAtTime(vol, t0);
+    22→    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    23→    o.connect(g);
+    24→    g.connect(a.destination);
+    25→    o.start(t0);
+    26→    o.stop(t0 + dur + 0.02);
+    27→  }
+    28→
+    29→  return {
+    30→    get muted() { return muted; },
+    31→    toggle() {
+    32→      muted = !muted;
+    33→      store.set("cubiq.mute", muted ? "1" : "0");
+    34→      return muted;
+    35→    },
+    36→    pickup() { if (!muted) tone(330, 0, 0.045, "sine", 0.07); },
+    37→    place() { if (!muted) { tone(196, 0, 0.07, "triangle", 0.13); tone(262, 0.03, 0.06, "triangle", 0.08); } },
+    38→    invalid() { if (!muted) { tone(150, 0, 0.07, "square", 0.05); tone(110, 0.06, 0.09, "square", 0.05); } },
+    39→    tick() { if (!muted) tone(880, 0, 0.05, "square", 0.06); },
+    40→    clear(lines) {
+    41→      if (!muted) {
+    42→        const notes = [523, 659, 784, 988, 1175, 1319];
+    43→        for (let i = 0; i < Math.min(lines + 1, 6); i++) tone(notes[i], i * 0.07, 0.12, "square", 0.08);
+    44→        if (lines >= 2) tone(notes[Math.min(lines, 5)] * 2, lines * 0.07 + 0.05, 0.16, "triangle", 0.07);
+    45→        /* hafif yankı */
+    46→        tone(notes[Math.min(lines, 5)], lines * 0.07 + 0.26, 0.16, "triangle", 0.035);
+    47→      }
+    48→    },
+    49→    over() { if (!muted) [392, 330, 262, 196].forEach((f, i) => tone(f, i * 0.16, 0.18, "sawtooth", 0.07)); },
+    50→    best() { if (!muted) [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.09, 0.14, "triangle", 0.11)); },
+    51→  };
+    52→})();
+    53→
+    54→/* Jeneratif arka plan müziği v2 — canlı: akor pedi + bas pluck + desenli arpej + tık (ayrı anahtar) */
+    55→const Music = (() => {
+    56→  let ac = null;
+    57→  let timer = 0;
+    58→  let step = 0;
+    59→  let on = DB.get("cubiq.music", "1") === "1";
+    60→  const BAR_S = 2.6; // bar süresi (s) — v1'den daha tempolu
+    61→  const chords = [
+    62→    [220.0, 261.63, 329.63], // Am
+    63→    [174.61, 220.0, 261.63], // F
+    64→    [130.81, 164.81, 196.0], // C
+    65→    [196.0, 246.94, 293.66], // G
+    66→    [220.0, 261.63, 329.63], // Am
+    67→    [146.83, 174.61, 220.0], // Dm
+    68→    [174.61, 220.0, 261.63], // F
+    69→    [196.0, 246.94, 293.66], // G
+    70→  ];
+    71→
+    72→  function ctx() {
+    73→    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    74→    if (ac.state === "suspended") ac.resume();
+    75→    return ac;
+    76→  }
+    77→
+    78→  function voice(type, freq, start, dur, vol, attack) {
+    79→    const a = ctx();
+    80→    const o = a.createOscillator();
+    81→    const g = a.createGain();
+    82→    o.type = type;
+    83→    o.frequency.value = freq;
+    84→    g.gain.setValueAtTime(0.0001, start);
+    85→    g.gain.linearRampToValueAtTime(vol, start + attack);
+    86→    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    87→    o.connect(g);
+    88→    g.connect(a.destination);
+    89→    o.start(start);
+    90→    o.stop(start + dur + 0.05);
+    91→  }
+    92→
+    93→  function playBar(freqs, delay) {
+    94→    const a = ctx();
+    95→    const start = a.currentTime + delay;
+    96→    /* akor pedi (yumuşak) */
+    97→    freqs.forEach((f) => voice("sine", f / 2, start, BAR_S + 0.6, 0.024, 0.5));
+    98→    /* canlı bas: kök nota pluck'ları (üçüncüde beşlisi) */
+    99→    [0, 0.95, 1.9].forEach((t, i) => {
+   100→      voice("triangle", (freqs[0] / 2) * (i === 2 ? 1.5 : 1), start + t, 0.3, 0.05, 0.012);
+   101→    });
+   102→    /* desenli arpej — her barda dönüşümlü figür */
+   103→    const pattern = step % 2 === 0 ? [0, 1, 2, 1, 2, 0] : [2, 1, 0, 1, 2, 1];
+   104→    pattern.forEach((pi, i) => {
+   105→      voice("triangle", freqs[pi] * 2, start + i * (BAR_S / 6), 0.34, 0.026 + (i % 2) * 0.008, 0.02);
+   106→    });
+   107→    /* tık vurguları */
+   108→    [0.6, 1.8].forEach((t) => voice("square", 1568, start + t, 0.04, 0.012, 0.005));
+   109→  }
+   110→
+   111→  function loop() {
+   112→    if (!on) return;
+   113→    playBar(chords[step % chords.length], 0.06);
+   114→    step++;
+   115→    timer = setTimeout(loop, BAR_S * 1000);
+   116→  }
+   117→
+   118→  function start() {
+   119→    if (!on || timer) return;
+   120→    ctx();
+   121→    loop();
+   122→  }
+   123→  function stop() {
+   124→    clearTimeout(timer);
+   125→    timer = 0;
+   126→  }
+   127→  return {
+   128→    get on() { return on; },
+   129→    set on(v) {
+   130→      on = !!v;
+   131→      DB.set("cubiq.music", on ? "1" : "0");
+   132→      if (on) start(); else stop();
+   133→    },
+   134→    kick: start,
+   135→  };
+   136→})();
+   137→
+   138→(() => {
+   139→  const menuEl = document.getElementById("screen-menu");
+   140→  const hudEl = document.getElementById("hud");
+   141→  const scoreEl = document.getElementById("score");
+   142→  const fillEl = document.getElementById("scorefill");
+   143→  const crownEl = document.getElementById("crown");
+   144→  const multEl = document.getElementById("mult");
+   145→  const ovLife = document.getElementById("ovLife");
+   146→  const lifeStats = document.getElementById("lifeStats");
+   147→  const ovClose = document.getElementById("ovClose");
+   148→  const reviveBtn = document.getElementById("revive");
+   149→  const coinReviveBtn = document.getElementById("coinRevive");
+   150→  const ovSpark = document.getElementById("ovSpark");
+   151→  let lastCoinsEarned = 0;
+   152→  const timerWrap = document.getElementById("timerWrap");
+   153→  const timerEl = document.getElementById("timer");
+   154→  const pauseEl = document.getElementById("pauseOverlay");
+   155→  const overlay = document.getElementById("overlay");
+   156→  const ovTitle = document.getElementById("ovTitle");
+   157→  const ovScore = document.getElementById("ovScore");
+   158→  const ovBest = document.getElementById("ovBest");
+   159→  const ovNew = document.getElementById("ovNew");
+   160→  const ovStats = document.getElementById("ovStats");
+   161→  const muteBtn = document.getElementById("mute");
+   162→  const goalChip = document.getElementById("goalChip");
+   163→  const nextLevelBtn = document.getElementById("nextLevel");
+   164→  const hintEl = document.getElementById("hint");
+   165→  const canvas = Renderer.canvas;
+   166→
+   167→  const settings = {
+   168→    get vib() { return DB.get("cubiq.vib", "1") === "1"; },
+   169→    set vib(v) { DB.set("cubiq.vib", v ? "1" : "0"); },
+   170→  };
+   171→  const vib = (pattern) => {
+   172→    try { if (settings.vib && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* yoksa yok say */ }
+   173→  };
+   174→
+   175→  /* ---------- rozet motoru ---------- */
+   176→  const BADGES = [
+   177→    { id: "first_line", icon: "💥", name: "İlk Patlama", desc: "İlk çizgiyi temizle", check: (s) => s.totalLines >= 1 },
+   178→    { id: "lines_25", icon: "🧱", name: "Isınma Turu", desc: "Toplam 25 çizgi", check: (s) => s.totalLines >= 25 },
+   179→    { id: "lines_100", icon: "🏗️", name: "Usta", desc: "Toplam 100 çizgi", check: (s) => s.totalLines >= 100 },
+   180→    { id: "lines_500", icon: "👑", name: "Efsane", desc: "Toplam 500 çizgi", check: (s) => s.totalLines >= 500 },
+   181→    { id: "streak_2", icon: "🔥", name: "Sıcak Eller", desc: "×1.5 seriye ulaş", check: (s, ev) => (ev.bestStreak || 0) >= 2 },
+   182→    { id: "streak_4", icon: "🌋", name: "Alev Ustası", desc: "×2.5 seriye ulaş", check: (s, ev) => (ev.bestStreak || 0) >= 4 },
+   183→    { id: "streak_6", icon: "☄️", name: "Ateş Yarıcısı", desc: "×3.5 seriye ulaş", check: (s, ev) => (ev.bestStreak || 0) >= 6 },
+   184→    { id: "score_1000", icon: "⭐", name: "Yıldız Avcısı", desc: "Tek oyunda 1000 puan", check: (s, ev) => (ev.gameScore || 0) >= 1000 },
+   185→    { id: "score_3000", icon: "🌟", name: "Süpernova", desc: "Tek oyunda 3000 puan", check: (s, ev) => (ev.gameScore || 0) >= 3000 },
+   186→    { id: "combo_3", icon: "💣", name: "Üçlü Vuruş", desc: "Tek hamlede 3 çizgi", check: (s, ev) => (ev.maxCombo || 0) >= 3 },
+   187→    { id: "combo_4", icon: "🌠", name: "Göktaşı", desc: "Tek hamlede 4+ çizgi", check: (s, ev) => (ev.maxCombo || 0) >= 4 },
+   188→    { id: "games_10", icon: "🎯", name: "Vazgeçmeyen", desc: "10 oyun tamamla", check: (s) => s.gamesPlayed >= 10 },
+   189→    { id: "pure_2000", icon: "🧠", name: "Saf Zeka", desc: "İpucu kullanmadan 2000 puan", check: (s, ev) => (ev.gameScore || 0) >= 2000 && !ev.hintUsed },
+   190→    { id: "daily_3", icon: "📅", name: "Alışkanlık", desc: "3 farklı günde günlük görev", check: (s, ev) => (ev.dailyDays || 0) >= 3 },
+   191→    { id: "total_10000", icon: "💎", name: "Koleksiyoner", desc: "Toplam 10.000 puan", check: (s) => s.totalScore >= 10000 },
+   192→    { id: "full_clear", icon: "🧹", name: "Masa Temiz", desc: "Tahtadaki bütün kareleri tek hamlede temizle", check: (s, ev) => !!ev.fullClear },
+   193→  ];
+   194→
+   195→  function countDailyDays() {
+   196→    let n = 0;
+   197→    for (let i = 0; i < localStorage.length; i++) {
+   198→      if (localStorage.key(i).startsWith("cubiq.daily.")) n++;
+   199→    }
+   200→    return n;
+   201→  }
+   202→
+   203→  function toast(msg) {
+   204→    const box = document.getElementById("toasts");
+   205→    const el = document.createElement("div");
+   206→    el.className = "toast";
+   207→    el.textContent = msg;
+   208→    box.appendChild(el);
+   209→    setTimeout(() => el.remove(), 3300);
+   210→  }
+   211→
+   212→  function escapeHtml(s) {
+   213→    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+   214→  }
+   215→  function playerName() {
+   216→    return (DB.get("cubiq.name", "") || "").trim() || "Konuk";
+   217→  }
+   218→
+   219→  /* ---------- günlük görev ---------- */
+   220→  function todayStr() {
+   221→    const d = new Date();
+   222→    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+   223→  }
+   224→  function dailyKey() { return "cubiq.daily." + todayStr(); }
+   225→  function updateDailyUI() {
+   226→    const best = DB.get(dailyKey(), null);
+   227→    const st = document.getElementById("dailyStatus");
+   228→    st.textContent = best === null ? "Bugünün dizisi · henüz oynanmadı" : `Bugün tamamlandı · en iyi ${best}`;
+   229→  }
+   230→
+   231→  /* ---------- XP / seviye ---------- */
+   232→  function levelFromXp(xp) {
+   233→    let L = 1;
+   234→    while (xp >= 100 * L * L) L++;
+   235→    return L;
+   236→  }
+   237→
+   238→  /* ---------- coin ekonomisi ---------- */
+   239→  const REVIVE_COST = 30; // altınla ikinci devam jetonu
+   240→  function coins() { return Number(DB.get("cubiq.coins", 0)) || 0; }
+   241→  function updateCoins() {
+   242→    const el = document.getElementById("coinChip");
+   243→    if (el) el.textContent = "🪙 " + coins();
+   244→  }
+   245→  function updateLevelUI() {
+   246→    const xp = Number(DB.get("cubiq.xp", 0)) || 0;
+   247→    const L = levelFromXp(xp);
+   248→    const prev = 100 * (L - 1) * (L - 1);
+   249→    const next = 100 * L * L;
+   250→    document.getElementById("lvlChip").textContent = "SV " + L;
+   251→    document.getElementById("xpfill").style.width = Math.min(100, ((xp - prev) / (next - prev)) * 100) + "%";
+   252→    document.getElementById("lvltext").textContent = `${xp} / ${next} XP`;
+   253→  }
+   254→
+   255→  /* ---------- son 10 oyun sparkline'ı ---------- */
+   256→  function buildSpark(hist) {
+   257→    if (hist.length < 2) return "";
+   258→    const w = 220, h = 36, pad = 3;
+   259→    const max = Math.max(...hist, 1);
+   260→    const stepX = (w - pad * 2) / (hist.length - 1);
+   261→    const pts = hist.map((v, i) => [(pad + i * stepX).toFixed(1), (h - pad - (v / max) * (h - pad * 2)).toFixed(1)]);
+   262→    const avg = Math.round(hist.reduce((a, b) => a + b, 0) / hist.length);
+   263→    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+   264→      `<polyline points="${pts.map((p) => p.join(",")).join(" ")}" fill="none" stroke="#a3eff9" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` +
+   265→      pts.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="2" fill="#ffd93d"/>`).join("") +
+   266→      `</svg><div class="sparket">son ${hist.length} oyun · ortalama ${avg}</div>`;
+   267→  }
+   268→
+   269→  /* ---------- yıldız derecelendirme: rekor kıyaslı 1-3 yıldız ---------- */
+   270→  function earnedStars() {
+   271→    if (Game.score <= 0) return 0;
+   272→    const r = Game.score / Math.max(Game.best, 1);
+   273→    if (r >= 0.999) return 3;
+   274→    if (r >= 0.6) return 2;
+   275→    return 1;
+   276→  }
+   277→
+   278→  function syncMuteIcon() {
+   279→    muteBtn.querySelector(".ion").classList.toggle("hidden", Sfx.muted);
+   280→    muteBtn.querySelector(".ioff").classList.toggle("hidden", !Sfx.muted);
+   281→  }
+   282→
+   283→  /* küresel liderlik: skor gönder, TOP 5'i panele bas (sunucu yoksa sessiz yerel mod) */
+   284→  async function renderLeaderboard(mode) {
+   285→    const el = document.getElementById("lbSection");
+   286→    if (Game.score <= 0) { el.innerHTML = ""; return; }
+   287→    el.innerHTML = `<div class="lboff">🌍 Skor gönderiliyor…</div>`;
+   288→    const res = await Api.submitScore({
+   289→      name: playerName(),
+   290→      score: Game.score,
+   291→      mode,
+   292→      lines: Game.stats ? Game.stats.lines : 0,
+   293→      streak: Game.stats ? Game.stats.bestStreak : 0,
+   294→    });
+   295→    if (!res || !res.ok) {
+   296→      el.innerHTML = `<div class="lboff">🌍 Çevrimdışı — skorun yerel olarak güvende</div>`;
+   297→      return;
+   298→    }
+   299→    const list = await Api.leaderboard(mode);
+   300→    if (!list) { el.innerHTML = `<div class="lboff">🌍 Liderlik tablosu alınamadı</div>`; return; }
+   301→    const rows = list.slice(0, 5).map((e, i) =>
+   302→      `<div class="lbrow${e.at === res.at ? " me" : ""}"><i>${i + 1}</i><b>${escapeHtml(e.name)}</b><span>${e.score}</span></div>`
+   303→    ).join("");
+   304→    el.innerHTML = `<div class="lbtitle">🌍 GLOBAL TOP 5 — sen #${res.rank}</div>${rows}`;
+   305→  }
+   306→
+   307→  function checkBadges(ev) {
+   308→    const s = DB.getStats();
+   309→    const owned = DB.getJSON("cubiq.badges", []);
+   310→    const newly = [];
+   311→    for (const b of BADGES) {
+   312→      if (!owned.includes(b.id) && b.check(s, ev)) newly.push(b);
+   313→    }
+   314→    if (!newly.length) return;
+   315→    DB.setJSON("cubiq.badges", owned.concat(newly.map((b) => b.id)));
+   316→    newly.forEach((b) => toast(`${b.icon} Rozet açıldı: ${b.name}`));
+   317→    Sfx.best();
+   318→  }
+   319→
+   320→  /* ---------- tema sistemi ---------- */
+   321→  function applyTheme(id) {
+   322→    DB.set("cubiq.theme", id);
+   323→    const t = activeTheme();
+   324→    COLORS = t.palette;
+   325→    const root = document.documentElement.style;
+   326→    root.setProperty("--bg1", t.bg[0]);
+   327→    root.setProperty("--bg2", t.bg[1]);
+   328→    root.setProperty("--bg3", t.bg[2]);
+   329→    /* açık/koyu arayüz değişkenleri (Cam teması: glassmorphism açık mod) */
+   330→    const light = t.ui === "light";
+   331→    const vars = {
+   332→      "--text": light ? "#232946" : "#eef0ff",
+   333→      "--text2": light ? "#5b6390" : "#a9afea",
+   334→      "--chip-bg": light ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.08)",
+   335→      "--chip-border": light ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.12)",
+   336→      "--surface": light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.05)",
+   337→      "--surface-border": light ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.09)",
+   338→      "--panel-a": light ? "rgba(255,255,255,0.78)" : "#292b66",
+   339→      "--panel-b": light ? "rgba(238,244,255,0.60)" : "#1d1f47",
+   340→      "--panel-border": light ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.15)",
+   341→      "--hint-bg": light ? "rgba(255,255,255,0.7)" : "rgba(10,11,30,0.75)",
+   342→      "--toast-bg": light ? "rgba(255,255,255,0.85)" : "rgba(18,20,48,0.94)",
+   343→      "--brand1": light ? "#4a6fe3" : "#a3eff9",
+   344→      "--brand2": light ? "#7a5ae0" : "#9dbcf5",
+   345→      "--brand3": light ? "#8b46d6" : "#dcb2f8",
+   346→    };
+   347→    Object.entries(vars).forEach(([k, v]) => root.setProperty(k, v));
+   348→    document.body.classList.toggle("ui-light", light);
+   349→    Renderer.retheme();
+   350→  }
+   351→
+   352→  function buildThemeGrid() {
+   353→    const grid = document.getElementById("themegrid");
+   354→    const total = DB.getStats().totalLines;
+   355→    grid.innerHTML = "";
+   356→    for (const t of THEMES) {
+   357→      const unlocked = total >= t.unlockLines;
+   358→      const selected = activeTheme().id === t.id;
+   359→      const card = document.createElement("button");
+   360→      card.className = "themecard" + (unlocked ? "" : " locked") + (selected ? " selected" : "");
+   361→      card.innerHTML =
+   362→        `<div class="swatches">${t.palette.map((p) => `<i style="background:${p.base}"></i>`).join("")}</div>` +
+   363→        `<b>${unlocked ? t.name : "🔒 " + t.name}</b>` +
+   364→        `<span>${selected ? "Seçili" : unlocked ? "Seç" : t.unlockLines + " çizgi"}</span>`;
+   365→      card.addEventListener("click", () => {
+   366→        if (!unlocked) {
+   367→          toast(`🔒 ${t.name} teması: ${t.unlockLines} çizgi gerekli`);
+   368→          Sfx.invalid();
+   369→          return;
+   370→        }
+   371→        applyTheme(t.id);
+   372→        buildThemeGrid();
+   373→        Sfx.pickup();
+   374→      });
+   375→      grid.appendChild(card);
+   376→    }
+   377→    document.getElementById("themeHint").textContent = `· toplam ${total} çizgi`;
+   378→  }
+   379→
+   380→  /* ---------- blok stili seçici (candy / elmas / neon) ---------- */
+   381→  function buildStyleGrid() {
+   382→    const grid = document.getElementById("stylegrid");
+   383→    const styles = [
+   384→      { id: "candy", name: "Candy", desc: "Yumuşak" },
+   385→      { id: "gem", name: "Elmas", desc: "Keskin" },
+   386→      { id: "neon", name: "Neon", desc: "Işıltı" },
+   387→    ];
+   388→    const current = DB.get("cubiq.blockstyle", "candy");
+   389→    grid.innerHTML = "";
+   390→    for (const st of styles) {
+   391→      const selected = current === st.id;
+   392→      const card = document.createElement("button");
+   393→      card.className = "themecard" + (selected ? " selected" : "");
+   394→      card.innerHTML =
+   395→        `<div class="swatchcanvas"><canvas class="stylecv" width="52" height="52" data-style="${st.id}"></canvas>` +
+   396→        `<canvas class="stylecv" width="52" height="52" data-style="${st.id}" data-color="3"></canvas></div>` +
+   397→        `<b>${st.name}</b><span>${selected ? "Seçili" : st.desc}</span>`;
+   398→      card.addEventListener("click", () => {
+   399→        DB.set("cubiq.blockstyle", st.id);
+   400→        Renderer.setBlockStyle(st.id);
+   401→        buildStyleGrid();
+   402→        Sfx.pickup();
+   403→      });
+   404→      grid.appendChild(card);
+   405→    }
+   406→    grid.querySelectorAll("canvas.stylecv").forEach((cv) => {
+   407→      Renderer.previewBlock(cv, Number(cv.dataset.color || 0), cv.dataset.style);
+   408→    });
+   409→  }
+   410→
+   411→  function fillBadges() {
+   412→    const grid = document.getElementById("badgegrid");
+   413→    const owned = DB.getJSON("cubiq.badges", []);
+   414→    grid.innerHTML = "";
+   415→    for (const b of BADGES) {
+   416→      const has = owned.includes(b.id);
+   417→      const card = document.createElement("div");
+   418→      card.className = "badgecard" + (has ? " unlocked" : " locked");
+   419→      card.innerHTML = `<div class="bicon">${has ? b.icon : "🔒"}</div><b>${b.name}</b><span>${b.desc}</span>`;
+   420→      grid.appendChild(card);
+   421→    }
+   422→    document.getElementById("badgeProgress").textContent = `${owned.length} / ${BADGES.length} rozet açıldı`;
+   423→  }
+   424→
+   425→  /* günlük giriş serisi */
+   426→  function updateLoginStreak() {
+   427→    const today = new Date().toDateString();
+   428→    if (DB.get("cubiq.lastPlay", "") === today) return;
+   429→    const yesterday = new Date(Date.now() - 864e5).toDateString();
+   430→    const streak = DB.get("cubiq.lastPlay", "") === yesterday ? Number(DB.get("cubiq.playStreak", 0)) + 1 : 1;
+   431→    DB.set("cubiq.playStreak", String(streak));
+   432→    DB.set("cubiq.lastPlay", today);
+   433→    if (streak >= 2) setTimeout(() => toast(`🔥 ${streak} günlük giriş serisi!`), 1200);
+   434→  }
+   435→
+   436→  /* migrasyon zinciri DB.migrate() içinde (v1 → v4) */
+   437→
+   438→  let screen = "menu"; // "menu" | "game"
+   439→  let shown = 0;       // animasyonlu sayılan skor
+   440→  let lastT = 0;
+   441→  let lastTickSecond = -1;
+   442→
+   443→  /* ipucu balonunu tahta ile tepsi arasındaki şeride yerleştir */
+   444→  function positionHint() {
+   445→    hintEl.style.top = Math.round(Renderer.L.boardY + Renderer.L.boardSize + 6) + "px";
+   446→  }
+   447→
+   448→  function popEl(el) {
+   449→    el.classList.remove("pop");
+   450→    void el.offsetWidth;
+   451→    el.classList.add("pop");
+   452→  }
+   453→
+   454→  function updateBar() {
+   455→    const barMax = Math.max(Game.best * 1.25, 100);
+   456→    fillEl.style.width = Math.min(100, (shown / barMax) * 100) + "%";
+   457→    crownEl.style.left = Game.best > 0 ? Math.min(100, (Game.best / barMax) * 100) + "%" : "0%";
+   458→    crownEl.style.opacity = Game.best > 0 ? "1" : "0.25";
+   459→    fillEl.classList.toggle("gold", Game.best > 0 && shown >= Game.best);
+   460→  }
+   461→
+   462→  function updateMenuBests() {
+   463→    document.getElementById("bestClassic").textContent = Number(DB.get("cubiq.best.classic", 0)) || 0;
+   464→    document.getElementById("bestTime").textContent = Number(DB.get("cubiq.best.time", 0)) || 0;
+   465→  }
+   466→
+   467→  /* HUD'daki seri çarpanı çipi */
+   468→  function updateMultChip(streak) {
+   469→    if (streak >= 2) {
+   470→      const m = 1 + SCORE.streakStep * (streak - 1);
+   471→      multEl.textContent = "🔥 SERİ ×" + (Number.isInteger(m) ? m : m.toFixed(1));
+   472→      multEl.classList.remove("hidden");
+   473→    } else {
+   474→      multEl.classList.add("hidden");
+   475→    }
+   476→  }
+   477→
+   478→  function fillLifeStats() {
+   479→    const s = DB.getStats();
+   480→    const stars = Number(DB.get("cubiq.stars", 0)) || 0;
+   481→    lifeStats.textContent =
+   482→      `🎮 ${s.gamesPlayed} oyun (${s.gamesClassic} klasik · ${s.gamesTime} zamanlı) · 💥 ${s.totalLines} çizgi · 🔥 en iyi seri ×${s.bestStreakEver} · ★ ${stars} yıldız · 🪙 ${coins()} altın`;
+   483→  }
+   484→
+   485→  function updateTimer() {
+   486→    const s = Math.max(0, Math.ceil(Game.timeLeft / 1000));
+   487→    timerEl.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+   488→    timerWrap.classList.toggle("low", s <= 10);
+   489→    if (s !== lastTickSecond) {
+   490→      lastTickSecond = s;
+   491→      if (s <= 5 && s > 0) Sfx.tick();
+   492→    }
+   493→  }
+   494→
+   495→  /* ---------- ekran geçişleri ---------- */
+   496→  function startGame(mode, levelIdx) {
+   497→    Game.start(mode, levelIdx);
+   498→    screen = "game";
+   499→    menuEl.classList.remove("active");
+   500→    hudEl.classList.remove("hidden");
+   501→    pauseEl.classList.add("hidden");
+   502→    overlay.classList.add("hidden");
+   503→    ovClose.style.display = "none";
+   504→    nextLevelBtn.classList.add("hidden");
+   505→    timerWrap.classList.toggle("hidden", Game.mode !== "time");
+   506→    if (Game.mode === "time") updateTimer();
+   507→    Renderer.setMenuMode(false);
+   508→    positionHint();
+   509→    hintEl.style.visibility = Game.best > 0 ? "hidden" : "visible";
+   510→    shown = 0;
+   511→    scoreEl.textContent = "0";
+   512→    updateBar();
+   513→    updateMultChip(0);
+   514→    updateGoalChip();
+   515→    Sfx.pickup();
+   516→  }
+   517→
+   518→  function showMenu() {
+   519→    screen = "menu";
+   520→    Game.paused = false;
+   521→    hudEl.classList.add("hidden");
+   522→    pauseEl.classList.add("hidden");
+   523→    overlay.classList.add("hidden");
+   524→    hintEl.style.visibility = "hidden";
+   525→    menuEl.classList.add("active");
+   526→    Renderer.setMenuMode(true);
+   527→    updateMenuBests();
+   528→    updateDailyUI();
+   529→    updateLevelUI();
+   530→    updateCoins();
+   531→    updateAdventureUI();
+   532→    const streak = Number(DB.get("cubiq.playStreak", 0)) || 0;
+   533→    const ls = document.getElementById("loginStreak");
+   534→    ls.textContent = streak >= 2 ? `🔥 ${streak} günlük giriş serisi` : "";
+   535→    ls.classList.toggle("hidden", streak < 2);
+   536→  }
+   537→
+   538→  function togglePause() {
+   539→    if (screen !== "game" || Game.over) return;
+   540→    Game.paused = !Game.paused;
+   541→    pauseEl.classList.toggle("hidden", !Game.paused);
+   542→    Sfx.pickup();
+   543→  }
+   544→
+   545→  function gameOver(reason) {
+   546→    Game.over = true;
+   547→    Sfx.over();
+   548→    vib([80, 50, 80]);
+   549→    if (Game.score > 0 && Game.score === Game.best) {
+   550→      Sfx.best();
+   551→      vib([10, 30, 10, 30, 40]);
+   552→    }
+   553→    ovTitle.textContent = reason === "time" ? "Süre Bitti!" : Game.mode === "adventure" ? "Bölüm Başarısız" : "Oyun Bitti";
+   554→    applyGameEnd();
+   555→    setTimeout(showGameOver, 500);
+   556→  }
+   557→
+   558→  /* oyun sonu işlemleri — panel görünsün ya da görünmesin TAM BİR KEZ işlenir */
+   559→  function applyGameEnd() {
+   560→    const st = Game.stats;
+   561→    /* kalıcı yaşam boyu istatistikler */
+   562→    DB.bumpStats((s) => {
+   563→      s.gamesPlayed += 1;
+   564→      if (Game.mode === "time") s.gamesTime += 1;
+   565→      else s.gamesClassic += 1;
+   566→      s.totalLines += st ? st.lines : 0;
+   567→      s.totalScore += Game.score;
+   568→      if (st) s.bestStreakEver = Math.max(s.bestStreakEver, st.bestStreak);
+   569→    });
+   570→    /* yıldız sayacı — macerada bölüm yıldızları */
+   571→    const stars = Game.mode === "adventure" ? lastAdvStars : earnedStars();
+   572→    DB.set("cubiq.stars", String((Number(DB.get("cubiq.stars", 0)) || 0) + stars));
+   573→    /* günlük görev sonucu */
+   574→    if (Game.mode === "daily") {
+   575→      const k = dailyKey();
+   576→      const prev = Number(DB.get(k, 0)) || 0;
+   577→      if (Game.score > prev) DB.set(k, String(Game.score));
+   578→    }
+   579→    /* son 10 oyun geçmişi (sparkline) */
+   580→    const hist = DB.getJSON("cubiq.history", []);
+   581→    hist.push(Game.score);
+   582→    while (hist.length > 10) hist.shift();
+   583→    DB.setJSON("cubiq.history", hist);
+   584→    /* XP: her oyun skor/50 (en az 1); seviye atlanırsa kutlama */
+   585→    const gainedXp = Game.score > 0 ? Math.max(1, Math.round(Game.score / 50)) : 0;
+   586→    const oldXp = Number(DB.get("cubiq.xp", 0)) || 0;
+   587→    const newXp = oldXp + gainedXp;
+   588→    DB.set("cubiq.xp", String(newXp));
+   589→    if (levelFromXp(newXp) > levelFromXp(oldXp)) {
+   590→      Renderer.confetti();
+   591→      toast(`🎉 Seviye ${levelFromXp(newXp)}!`);
+   592→      Sfx.best();
+   593→      vib([15, 30, 15, 30, 45]);
+   594→    }
+   595→    /* rozetler + liderlik gönderimi */
+   596→    checkBadges({ gameScore: Game.score, bestStreak: Game.stats.bestStreak, maxCombo: Game.stats.maxCombo, hintUsed: Game.hintUsed, dailyDays: countDailyDays(), fullClear: lastFullClear });
+   597→    /* coin kazanımı: skor/200 + tam temizlik 25 */
+   598→    const coinsEarned = Math.round(Game.score / 200) + (lastFullClear ? 25 : 0);
+   599→    DB.set("cubiq.coins", String(coins() + coinsEarned));
+   600→    lastCoinsEarned = coinsEarned;
+   601→    updateCoins();
+   602→    renderLeaderboard(Game.mode);
+   603→  }
+   604→
+   605→  /* oyun sonu paneli: yalnızca görüntüleme (oyun hâlâ ekrandaysa) */
+   606→  function showGameOver() {
+   607→    if (screen !== "game") return; /* kullanıcı menüye döndüyse panel gösterme */
+   608→    const isRecord = Game.score > 0 && Game.score === Game.best;
+   609→    ovScore.textContent = Game.score;
+   610→    ovBest.textContent = Game.best;
+   611→    ovNew.classList.toggle("hidden", !isRecord);
+   612→    document.querySelector("#overlay .panel").classList.toggle("gold", isRecord);
+   613→    const stars = Game.mode === "adventure" ? lastAdvStars : earnedStars();
+   614→    ovStars.innerHTML = [1, 2, 3].map((n) =>
+   615→      `<svg class="icon${n <= stars ? " full" : ""}" aria-hidden="true"><use href="#i-star"/></svg>`).join("");
+   616→    const canRevive = !Game.reviveUsed && Game.mode === "classic" && Game.score > 0;
+   617→    reviveBtn.classList.toggle("hidden", !canRevive);
+   618→    /* coinle ikinci jeton: ücretsiz hak bitince ve kasada yeterli altın varsa */
+   619→    const canCoinRevive = !canRevive && !Game.coinReviveUsed && Game.mode === "classic" && Game.score > 0 && coins() >= REVIVE_COST;
+   620→    coinReviveBtn.classList.toggle("hidden", !canCoinRevive);
+   621→    coinReviveBtn.innerHTML = `🪙 ${REVIVE_COST} — ALTINLA DEVAM`;
+   622→    /* macerada bölüm tamamlandıysa ve sonraki bölüm varsa "SONRAKİ BÖLÜM" göster */
+   623→    nextLevelBtn.classList.toggle("hidden",
+   624→      !(Game.mode === "adventure" && Game.completed && Game.levelIdx + 1 < LEVELS.length));
+   625→    if (Game.mode === "adventure") {
+   626→      ovClose.textContent = Game.completed
+   627→        ? `✅ ${LEVELS[Game.levelIdx].name} tamamlandı · +${10 + Game.levelIdx * 2} altın`
+   628→        : `❌ Hedefe ulaşılamadı · ${LEVELS[Game.levelIdx].name}`;
+   629→      ovClose.style.display = "block";
+   630→    } else if (Game.mode === "daily") {
+   631→      const prev = Number(DB.get(dailyKey(), 0)) || 0;
+   632→      ovClose.textContent = `📅 Günlük görev tamamlandı · bugünkü en iyi ${Math.max(prev, Game.score)}`;
+   633→      ovClose.style.display = "block";
+   634→    } else if (!isRecord && Game.best > 0 && Game.score > 0) {
+   635→      const pct = Math.min(100, Math.round((Game.score / Game.best) * 100));
+   636→      ovClose.textContent = `🎯 Rekoruna %${pct} ulaştın`;
+   637→      ovClose.style.display = "block";
+   638→    } else {
+   639→      ovClose.style.display = "none";
+   640→    }
+   641→    const hist = DB.getJSON("cubiq.history", []);
+   642→    ovSpark.innerHTML = buildSpark(hist);
+   643→    const st = Game.stats;
+   644→    const has = st && st.lines > 0;
+   645→    ovStats.textContent = has ? `🔥 ${st.lines} çizgi · en iyi seri ×${st.bestStreak}` : "";
+   646→    ovStats.style.display = has ? "block" : "none";
+   647→    const life = DB.getStats();
+   648→    ovLife.textContent = `📈 ${life.gamesPlayed}. oyun · toplam ${life.totalLines} çizgi`;
+   649→    ovCoins.textContent = lastCoinsEarned > 0 ? `🪙 +${lastCoinsEarned} altın kazandın · kasada ${coins()}` : "";
+   650→    ovCoins.style.display = lastCoinsEarned > 0 ? "block" : "none";
+   651→    overlay.classList.remove("hidden");
+   652→  }
+   653→
+   654→  /* devam jetonu: ücretsiz hak ya da 30 altın — alt 4 satırı temizleyerek sürdürür */
+   655→  function revive(useCoins) {
+   656→    if (!Game.over || Game.mode !== "classic") return false;
+   657→    if (!useCoins) {
+   658→      if (Game.reviveUsed) return false;
+   659→      Game.reviveUsed = true;
+   660→    } else {
+   661→      if (Game.coinReviveUsed) return false;
+   662→      if (coins() < REVIVE_COST) {
+   663→        toast("🪙 Yetersiz altın");
+   664→        Sfx.invalid();
+   665→        return false;
+   666→      }
+   667→      DB.set("cubiq.coins", String(coins() - REVIVE_COST));
+   668→      Game.coinReviveUsed = true;
+   669→    }
+   670→    const cleared = [];
+   671→    for (let r = 4; r < 8; r++) {
+   672→      for (let c = 0; c < 8; c++) {
+   673→        if (Game.grid[r][c] !== null) {
+   674→          cleared.push({ r, c, color: Game.grid[r][c] });
+   675→          Game.grid[r][c] = null;
+   676→        }
+   677→      }
+   678→    }
+   679→    Game.over = false;
+   680→    overlay.classList.add("hidden");
+   681→    Renderer.placeEffect({ placed: [], cleared, lines: 0, rows: [], cols: [], gain: 0 });
+   682→    Sfx.best();
+   683→    vib([20, 40, 20]);
+   684→    toast(useCoins ? "🪙 Altınla devam edildi — alt 4 satır temizlendi!" : "❤️ Devam jetonu — alt 4 satır temizlendi!");
+   685→    updateCoins();
+   686→    return true;
+   687→  }
+   688→
+   689→  /* ---------- oyun içi girdi ---------- */
+   690→  function xy(e) {
+   691→    const rect = canvas.getBoundingClientRect();
+   692→    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+   693→  }
+   694→
+   695→  function trayHit(x, y) {
+   696→    for (let i = 0; i < 3; i++) {
+   697→      const p = Game.tray[i];
+   698→      if (!p) continue;
+   699→      const s = Renderer.slotCenter(i);
+   700→      const hw = (p.w * Renderer.L.trayCell) / 2 + 16;
+   701→      const hh = (p.h * Renderer.L.trayCell) / 2 + 16;
+   702→      if (Math.abs(x - s.cx) <= hw && Math.abs(y - s.cy) <= hh) return i;
+   703→    }
+   704→    return -1;
+   705→  }
+   706→
+   707→  function computeTarget() {
+   708→    const piece = drag.piece;
+   709→    const cx = drag.px, cy = drag.py - drag.lift;
+   710→    const Lb = Renderer.L;
+   711→    /* hayalet parça merkezi → ızgara hücresi (merkez, hücre merkezine denk gelmeli) */
+   712→    const r = Math.round((cy - Lb.boardY) / Lb.cell - piece.h / 2);
+   713→    const c = Math.round((cx - Lb.boardX) / Lb.cell - piece.w / 2);
+   714→    if (Game.canPlace(piece, r, c)) return { r, c, valid: true, sim: Game.previewLines(piece, r, c) };
+   715→    return { r, c, valid: false };
+   716→  }
+   717→
+   718→  let drag = null;
+   719→  let lastFullClear = false;
+   720→  let lastAdvStars = 0;
+   721→  let kb = null; // klavye modu: { idx, r, c } — 1/2/3 seç · oklar taşı · Enter bırak
+   722→
+   723→  /* ---------- macera modu ---------- */
+   724→  function advState() { return DB.getJSON("cubiq.adv", { unlocked: 1, stars: {} }); }
+   725→  function goalMet() {
+   726→    const g = LEVELS[Game.levelIdx].goal;
+   727→    if (g.type === "score") return Game.score >= g.v;
+   728→    if (g.type === "lines") return Game.stats.lines >= g.v;
+   729→    if (g.type === "streak") return Game.streak >= g.v;
+   730→    if (g.type === "combo") return Game.stats.maxCombo >= g.v;
+   731→    return false;
+   732→  }
+   733→  function updateGoalChip() {
+   734→    const show = Game.mode === "adventure";
+   735→    goalChip.classList.toggle("hidden", !show);
+   736→    if (!show) return;
+   737→    const g = LEVELS[Game.levelIdx].goal;
+   738→    const unit = g.type === "score" ? " puan" : g.type === "lines" ? " çizgi" : g.type === "streak" ? " seri" : " combo";
+   739→    let cur = 0;
+   740→    if (g.type === "score") cur = Math.min(Game.score, g.v);
+   741→    else if (g.type === "lines") cur = Math.min(Game.stats.lines, g.v);
+   742→    else if (g.type === "streak") cur = Math.min(Game.streak, g.v);
+   743→    else cur = Math.min(Game.stats.maxCombo, g.v);
+   744→    goalChip.textContent = "B" + (Game.levelIdx + 1) + " · " + cur + "/" + g.v + unit;
+   745→  }
+   746→  function checkAdventure() {
+   747→    if (Game.mode !== "adventure" || Game.over || Game.completed) return;
+   748→    if (goalMet()) completeLevel();
+   749→  }
+   750→  function completeLevel() {
+   751→    const G = Game;
+   752→    G.completed = true;
+   753→    G.over = true;
+   754→    const idx = G.levelIdx;
+   755→    lastAdvStars = G.stats.moves <= 22 ? 3 : G.stats.moves <= 34 ? 2 : 1;
+   756→    const adv = advState();
+   757→    adv.stars[String(idx + 1)] = Math.max(Number(adv.stars[String(idx + 1)]) || 0, lastAdvStars);
+   758→    adv.unlocked = Math.max(Number(adv.unlocked) || 1, Math.min(LEVELS.length, idx + 2));
+   759→    DB.setJSON("cubiq.adv", adv);
+   760→    Renderer.confetti();
+   761→    Sfx.best();
+   762→    vib([25, 40, 25, 40, 60]);
+   763→    ovTitle.textContent = LEVELS[idx].name + " — Tamamlandı!";
+   764→    applyGameEnd();
+   765→    /* bölüm bonusu */
+   766→    const bonus = 10 + idx * 2;
+   767→    DB.set("cubiq.coins", String(coins() + bonus));
+   768→    lastCoinsEarned = (lastCoinsEarned || 0) + bonus;
+   769→    updateCoins();
+   770→    setTimeout(showGameOver, 600);
+   771→  }
+   772→  function updateAdventureUI() {
+   773→    const adv = advState();
+   774→    const st = document.getElementById("advStatus");
+   775→    st.textContent = adv.unlocked >= LEVELS.length ? "Tüm bölümler tamam! 🏆" : "Bölüm " + adv.unlocked + "/" + LEVELS.length;
+   776→  }
+   777→
+   778→  function kbPiece() { return kb ? Game.tray[kb.idx] : null; }
+   779→  function cancelKb() {
+   780→    kb = null;
+   781→    Renderer.setDrag(null);
+   782→  }
+   783→  function updateKbDrag() {
+   784→    if (!kb) return;
+   785→    const p = kbPiece();
+   786→    if (!p) { cancelKb(); return; }
+   787→    const Lb = Renderer.L;
+   788→    const px = Lb.boardX + (kb.c + p.w / 2) * Lb.cell;
+   789→    const py = Lb.boardY + (kb.r + p.h / 2) * Lb.cell;
+   790→    const valid = Game.canPlace(p, kb.r, kb.c);
+   791→    Renderer.setDrag({
+   792→      idx: kb.idx, piece: p, px, py, lift: 0,
+   793→      target: valid
+   794→        ? { r: kb.r, c: kb.c, valid: true, sim: Game.previewLines(p, kb.r, kb.c) }
+   795→        : { r: kb.r, c: kb.c, valid: false },
+   796→    });
+   797→  }
+   798→  function selectKb(i) {
+   799→    const p = Game.tray[i];
+   800→    if (!p || Game.over || Game.paused) return;
+   801→    const spot = Game.anyPlacement(p);
+   802→    kb = { idx: i, r: spot ? spot.r : 0, c: spot ? spot.c : 0 };
+   803→    Sfx.pickup();
+   804→    updateKbDrag();
+   805→  }
+   806→  function moveKb(dr, dc) {
+   807→    if (!kb) return;
+   808→    const p = kbPiece();
+   809→    if (!p) { cancelKb(); return; }
+   810→    kb.r = Math.max(0, Math.min(Game.N - p.h, kb.r + dr));
+   811→    kb.c = Math.max(0, Math.min(Game.N - p.w, kb.c + dc));
+   812→    updateKbDrag();
+   813→  }
+   814→  function placeKb() {
+   815→    if (!kb) return;
+   816→    const p = kbPiece();
+   817→    if (!p) { cancelKb(); return; }
+   818→    if (!Game.canPlace(p, kb.r, kb.c)) { Sfx.invalid(); return; }
+   819→    const res = Game.place(kb.idx, kb.r, kb.c);
+   820→    cancelKb();
+   821→    if (res) handlePlace(res);
+   822→  }
+   823→
+   824→  canvas.addEventListener("pointerdown", (e) => {
+   825→    if (kb) { kb = null; Renderer.setDrag(null); } /* klavye modundan fareye geçiş */
+   826→    if (screen !== "game" || Game.over || Game.paused || drag) return;
+   827→    const { x, y } = xy(e);
+   828→    const idx = trayHit(x, y);
+   829→    if (idx < 0) return;
+   830→    e.preventDefault();
+   831→    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* sentetik test işaretçileri yakalanamayabilir */ }
+   832→    const lift = e.pointerType === "touch" ? Renderer.L.cell * 1.5 : Renderer.L.cell * 0.4;
+   833→    drag = { idx, piece: Game.tray[idx], pointerId: e.pointerId, px: x, py: y, lift };
+   834→    Renderer.setDrag({ idx, piece: drag.piece, px: x, py: y, lift, target: null });
+   835→    Sfx.pickup();
+   836→    vib(6);
+   837→  }, { passive: false });
+   838→
+   839→  canvas.addEventListener("pointermove", (e) => {
+   840→    if (!drag || e.pointerId !== drag.pointerId) return;
+   841→    e.preventDefault();
+   842→    const { x, y } = xy(e);
+   843→    drag.px = x;
+   844→    drag.py = y;
+   845→    const d = Renderer.getDrag();
+   846→    d.px = x;
+   847→    d.py = y;
+   848→    d.target = computeTarget();
+   849→  }, { passive: false });
+   850→
+   851→  function endDrag(e) {
+   852→    if (!drag || e.pointerId !== drag.pointerId) return;
+   853→    const d = Renderer.getDrag();
+   854→    let placed = false;
+   855→    if (d.target && d.target.valid) {
+   856→      const res = Game.place(drag.idx, d.target.r, d.target.c);
+   857→      if (res) {
+   858→        placed = true;
+   859→        handlePlace(res);
+   860→      }
+   861→    }
+   862→    if (!placed) {
+   863→      Renderer.snapBack(drag.idx, d.px, d.py - drag.lift);
+   864→      Sfx.invalid();
+   865→      vib(18);
+   866→    }
+   867→    Renderer.setDrag(null);
+   868→    drag = null;
+   869→  }
+   870→  canvas.addEventListener("pointerup", endDrag);
+   871→  canvas.addEventListener("pointercancel", endDrag);
+   872→  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+   873→
+   874→  function placedCenter(res) {
+   875→    let sr = 0, sc = 0;
+   876→    for (const [r, c] of res.placed) { sr += r; sc += c; }
+   877→    const n = res.placed.length;
+   878→    const Lb = Renderer.L;
+   879→    return { x: Lb.boardX + (sc / n + 0.5) * Lb.cell, y: Lb.boardY + (sr / n + 0.5) * Lb.cell };
+   880→  }
+   881→
+   882→  function handlePlace(res) {
+   883→    lastFullClear = !!res.fullClear;
+   884→    Renderer.placeEffect(res);
+   885→    popEl(scoreEl);
+   886→    updateBar();
+   887→    Sfx.place();
+   888→    vib(8);
+   889→    const bc = Renderer.boardCenter();
+   890→    if (res.lines > 0) {
+   891→      Sfx.clear(res.lines);
+   892→      vib(res.lines >= 2 ? [12, 30, 12, 30, 24] : 12);
+   893→      const labels = { 1: "GÜZEL!", 2: "MUHTEŞEM!", 3: "EFSANE!" };
+   894→      const txt = res.lines >= 4 ? "İNANILMAZ!" : labels[res.lines];
+   895→      const col = res.lines >= 4 ? "#ff9296" : res.lines === 3 ? "#ffd93d" : res.lines === 2 ? "#a3eff9" : "#ffffff";
+   896→      Renderer.float(txt, bc.x, bc.y - 26, true, col);
+   897→      if (res.streak >= 2) Renderer.float("SERİ x" + res.streak, bc.x, bc.y - 64, false, "#ffb86b");
+   898→      Renderer.float("+" + res.gain, bc.x, bc.y + 22, res.lines >= 2, res.lines >= 2 ? "#ffd93d" : "#a3eff9");
+   899→      updateMultChip(res.streak);
+   900→      /* TAM TEMİZLİK: tahta sıfırlandı — konfeti + özel ses */
+   901→      if (res.fullClear) {
+   902→        Renderer.confetti();
+   903→        Renderer.float("TAM TEMİZLİK!", bc.x, bc.y - 100, true, "#ffd93d");
+   904→        Sfx.best();
+   905→        vib([30, 40, 30, 40, 60]);
+   906→      }
+   907→    } else {
+   908→      const pc = placedCenter(res);
+   909→      Renderer.float("+" + res.gain, pc.x, pc.y, false);
+   910→    }
+   911→    /* Zamana Karşı: büyük patlamaya süre bonusu */
+   912→    if (Game.mode === "time" && !res.over && res.lines >= 4) {
+   913→      Game.timeLeft += 10000;
+   914→      Renderer.float("+10s", bc.x, bc.y - 92, true, "#6bcb77");
+   915→      Sfx.tick();
+   916→    }
+   917→    checkBadges({ gameScore: Game.score, bestStreak: Game.streak, maxCombo: Game.stats.maxCombo, hintUsed: Game.hintUsed, dailyDays: countDailyDays(), fullClear: res.fullClear });
+   918→    updateGoalChip();
+   919→    checkAdventure();
+   920→    if (res.over) gameOver("stuck");
+   921→  }
+   922→
+   923→  /* ---------- düğmeler ---------- */
+   924→  document.getElementById("btnClassic").addEventListener("click", () => startGame("classic"));
+   925→  document.getElementById("btnTime").addEventListener("click", () => startGame("time"));
+   926→  document.getElementById("btnDaily").addEventListener("click", () => startGame("daily"));
+   927→  document.getElementById("btnAdventure").addEventListener("click", () => {
+   928→    /* en son açılan bölümden başla (bölüm 1 tabanlı) */
+   929→    const adv = DB.getJSON("cubiq.adv", { unlocked: 1, stars: {} });
+   930→    startGame("adventure", Math.max(0, Math.min(LEVELS.length, Number(adv.unlocked) || 1) - 1));
+   931→  });
+   932→  document.getElementById("btnHow").addEventListener("click", () => {
+   933→    document.getElementById("modal-how").classList.remove("hidden");
+   934→    Sfx.pickup();
+   935→  });
+   936→  document.getElementById("btnBadges").addEventListener("click", () => {
+   937→    fillBadges();
+   938→    document.getElementById("modal-badges").classList.remove("hidden");
+   939→    Sfx.pickup();
+   940→  });
+   941→  document.getElementById("btnSettings").addEventListener("click", () => {
+   942→    fillLifeStats();
+   943→    buildThemeGrid();
+   944→    buildStyleGrid();
+   945→    syncSwitches();
+   946→    Renderer.setShake(DB.getShake());
+   947→    document.getElementById("modal-settings").classList.remove("hidden");
+   948→    Sfx.pickup();
+   949→  });
+   950→  document.querySelectorAll(".close").forEach((btn) =>
+   951→    btn.addEventListener("click", () => document.getElementById(btn.dataset.close).classList.add("hidden"))
+   952→  );
+   953→
+   954→  document.getElementById("pause").addEventListener("click", togglePause);
+   955→  document.getElementById("hintBtn").addEventListener("click", () => {
+   956→    if (screen !== "game" || Game.over || Game.paused) return;
+   957→    let best = null;
+   958→    for (let i = 0; i < 3; i++) {
+   959→      const p = Game.tray[i];
+   960→      if (!p) continue;
+   961→      for (let r = 0; r <= 8 - p.h; r++) {
+   962→        for (let c = 0; c <= 8 - p.w; c++) {
+   963→          if (!Game.canPlace(p, r, c)) continue;
+   964→          const sim = Game.previewLines(p, r, c);
+   965→          const val = (sim.rows.length + sim.cols.length) * 1000;
+   966→          if (!best || val > best.val) {
+   967→            best = { val, cells: p.cells.map(([dr, dc]) => [r + dr, c + dc]) };
+   968→          }
+   969→        }
+   970→      }
+   971→    }
+   972→    if (best) {
+   973→      Game.hintUsed = true;
+   974→      Renderer.showHint(best.cells);
+   975→      Sfx.pickup();
+   976→    }
+   977→  });
+   978→  document.getElementById("resume").addEventListener("click", togglePause);
+   979→  document.getElementById("restart").addEventListener("click", () => startGame(Game.mode));
+   980→  document.getElementById("pauseRestart").addEventListener("click", () => startGame(Game.mode));
+   981→  document.getElementById("pauseMenu").addEventListener("click", showMenu);
+   982→  document.getElementById("toMenu").addEventListener("click", showMenu);
+   983→  document.getElementById("again").addEventListener("click", () => startGame(Game.mode));
+   984→  document.getElementById("nextLevel").addEventListener("click", () => startGame("adventure", Game.levelIdx + 1));
+   985→
+   986→  muteBtn.addEventListener("click", () => {
+   987→    Sfx.toggle();
+   988→    syncMuteIcon();
+   989→    syncSwitches();
+   990→  });
+   991→
+   992→  window.addEventListener("keydown", (e) => {
+   993→    if (screen !== "game") return;
+   994→    if (e.key === "Escape") {
+   995→      if (kb) cancelKb();
+   996→      else togglePause();
+   997→      return;
+   998→    }
+   999→    if (Game.paused || Game.over) return;
+  1000→    if (e.key === "1" || e.key === "2" || e.key === "3") {
+  1001→      selectKb(Number(e.key) - 1);
+  1002→      return;
+  1003→    }
+  1004→    if (!kb) return;
+  1005→    const p = kbPiece();
+  1006→    if (!p) { cancelKb(); return; }
+  1007→    const moves = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+  1008→    if (moves[e.key]) {
+  1009→      e.preventDefault();
+  1010→      moveKb(moves[e.key][0], moves[e.key][1]);
+  1011→      return;
+  1012→    }
+  1013→    if (e.key === "Enter" || e.key === " ") {
+  1014→      e.preventDefault();
+  1015→      placeKb();
+  1016→    }
+  1017→  });
+  1018→
+  1019→  /* ---------- ayarlar ---------- */
+  1020→  const swSound = document.getElementById("swSound");
+  1021→  const swVib = document.getElementById("swVib");
+  1022→  const swMusic = document.getElementById("swMusic");
+  1023→  const swShake = document.getElementById("swShake");
+  1024→  const resetBtn = document.getElementById("resetBest");
+  1025→
+  1026→  function syncSwitches() {
+  1027→    swSound.checked = !Sfx.muted;
+  1028→    swVib.checked = settings.vib;
+  1029→    swMusic.checked = Music.on;
+  1030→    swShake.checked = DB.getShake();
+  1031→  }
+  1032→
+  1033→  swSound.addEventListener("change", () => {
+  1034→    if (swSound.checked === Sfx.muted) Sfx.toggle();
+  1035→    syncMuteIcon();
+  1036→    if (!Sfx.muted) Sfx.pickup();
+  1037→  });
+  1038→  swVib.addEventListener("change", () => {
+  1039→    settings.vib = swVib.checked;
+  1040→    if (swVib.checked) vib(30);
+  1041→  });
+  1042→  swMusic.addEventListener("change", () => {
+  1043→    Music.on = swMusic.checked;
+  1044→    if (Music.on) toast("🎵 Müzik açıldı");
+  1045→  });
+  1046→  swShake.addEventListener("change", () => {
+  1047→    DB.setShake(swShake.checked);
+  1048→    if (swShake.checked) vib(30);
+  1049→  });
+  1050→  reviveBtn.addEventListener("click", () => revive(false));
+  1051→  document.getElementById("coinRevive").addEventListener("click", () => revive(true));
+  1052→  /* müzik tarayıcı politikası gereği ilk kullanıcı jestiyle başlar */
+  1053→  document.addEventListener("pointerdown", () => Music.kick(), { capture: true });
+  1054→
+  1055→  /* tam yığın: oyuncu adı + bulut yedeği */
+  1056→  const nameInput = document.getElementById("playerName");
+  1057→  nameInput.value = DB.get("cubiq.name", "");
+  1058→  nameInput.addEventListener("change", () => {
+  1059→    DB.set("cubiq.name", nameInput.value.replace(/[<>&]/g, "").trim().slice(0, 12));
+  1060→    nameInput.value = DB.get("cubiq.name", "");
+  1061→    toast("🌍 Adın kaydedildi");
+  1062→  });
+  1063→  document.getElementById("cloudSave").addEventListener("click", async () => {
+  1064→    const data = {};
+  1065→    for (let i = 0; i < localStorage.length; i++) {
+  1066→      const k = localStorage.key(i);
+  1067→      if (k.startsWith("cubiq.") || k.startsWith("blokustasi.")) data[k] = localStorage.getItem(k);
+  1068→    }
+  1069→    const ok = await Api.saveGame("main", data);
+  1070→    toast(ok ? "☁️ Yedek sunucuya kaydedildi" : "☁️ Sunucuya ulaşılamadı");
+  1071→  });
+  1072→  document.getElementById("cloudLoad").addEventListener("click", async () => {
+  1073→    const res = await Api.loadGame("main");
+  1074→    if (!res || !res.data) { toast("☁️ Sunucuda yedek bulunamadı"); return; }
+  1075→    Object.keys(res.data).forEach((k) => DB.set(k, String(res.data[k])));
+  1076→    toast("☁️ Yedek geri yüklendi — sayfa yenileniyor");
+  1077→    setTimeout(() => location.reload(), 900);
+  1078→  });
+  1079→
+  1080→  let resetArmed = false;
+  1081→  let resetTimer = 0;
+  1082→  function disarmReset() {
+  1083→    resetArmed = false;
+  1084→    resetBtn.textContent = "👑 REKORLARI SIFIRLA";
+  1085→  }
+  1086→  resetBtn.addEventListener("click", () => {
+  1087→    if (!resetArmed) {
+  1088→      resetArmed = true;
+  1089→      resetBtn.textContent = "EMİN MİSİN? TEKRAR DOKUN";
+  1090→      clearTimeout(resetTimer);
+  1091→      resetTimer = setTimeout(disarmReset, 3000);
+  1092→      return;
+  1093→    }
+  1094→    clearTimeout(resetTimer);
+  1095→    ["cubiq.best.classic", "cubiq.best.time", "cubiq.best", "blokustasi.best"].forEach((k) => DB.set(k, "0"));
+  1096→    Game.best = 0;
+  1097→    updateMenuBests();
+  1098→    updateBar();
+  1099→    disarmReset();
+  1100→    Sfx.pickup();
+  1101→  });
+  1102→
+  1103→  /* ---------- başlat ---------- */
+  1104→  Game.init();
+  1105→  applyTheme(activeTheme().id);
+  1106→  Renderer.setBlockStyle(DB.get("cubiq.blockstyle", "candy"));
+  1107→  updateLoginStreak();
+  1108→  updateDailyUI();
+  1109→  updateLevelUI();
+  1110→  updateCoins();
+  1111→  syncSwitches();
+  1112→  syncMuteIcon();
+  1113→  updateMenuBests();
+  1114→  updateBar();
+  1115→  Renderer.resize();
+  1116→  showMenu();
+  1117→  ovClose.style.display = "none";
+  1118→  hintEl.style.visibility = "hidden";
+  1119→
+  1120→  /* çevrimdışı PWA: service worker kaydı (yalnız http/https üstünde) */
+  1121→  const swStatus = document.getElementById("swStatus");
+  1122→  if ("serviceWorker" in navigator && (location.protocol === "http:" || location.protocol === "https:")) {
+  1123→    navigator.serviceWorker
+  1124→      .register("/sw.js")
+  1125→      .then(() => {
+  1126→        const ready = navigator.serviceWorker.controller ? "Kurulu — internet olmadan da oynanır" : "İlk yükleme tamamlandı";
+  1127→        if (swStatus) swStatus.textContent = ready;
+  1128→      })
+  1129→      .catch(() => { if (swStatus) swStatus.textContent = "Kayıt başarısız"; });
+  1130→  } else if (swStatus) {
+  1131→    swStatus.textContent = "Bu ortamda desteklenmiyor";
+  1132→  }
+  1133→
+  1134→  /* açılış splash'i: hareket azaltma tercihi varsa atla */
+  1135→  const splash = document.getElementById("splash");
+  1136→  const reducedMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  1137→  if (reducedMotion) splash.remove();
+  1138→  else setTimeout(() => splash.remove(), 2100);
+  1139→
+  1140→  /* pencere yeniden boyutlandırma: düzen + ipucu + klavye hayaleti tazelenir */
+  1141→  const onResize = () => {
+  1142→    Renderer.resize();
+  1143→    positionHint();
+  1144→    if (kb) updateKbDrag();
+  1145→  };
+  1146→  window.addEventListener("resize", onResize);
+  1147→  window.addEventListener("orientationchange", () => setTimeout(onResize, 250));
+  1148→  /* iOS Safari: araç çubuğu göster/gizle visualViewport ile gelir, window.resize tetiklenmeyebilir */
+  1149→  if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
+  1150→
+  1151→  function loop(now) {
+  1152→    Renderer.draw(now);
+  1153→    Game.updateFalling(now);
+  1154→    /* animasyonlu skor sayacı */
+  1155→    if (shown !== Game.score) {
+  1156→      if (Game.score < shown) {
+  1157→        shown = Game.score;
+  1158→      } else {
+  1159→        shown += Math.max(1, Math.ceil((Game.score - shown) * 0.16));
+  1160→        if (shown > Game.score) shown = Game.score;
+  1161→      }
+  1162→      scoreEl.textContent = shown;
+  1163→      updateBar();
+  1164→    }
+  1165→    /* Zamana Karşı sayacı */
+  1166→    if (screen === "game" && Game.mode === "time") {
+  1167→      const dt = Math.min(120, now - (lastT || now));
+  1168→      if (Game.advanceTime(dt)) gameOver("time");
+  1169→      updateTimer();
+  1170→    }
+  1171→    lastT = now;
+  1172→    requestAnimationFrame(loop);
+  1173→  }
+  1174→  requestAnimationFrame(loop);
+  1175→
+  1176→  /* QA / otomasyon kancası */
+  1177→  window.__game = {
+  1178→    Game, Renderer, Sfx,
+  1179→    startGame, showMenu, togglePause,
+  1180→    applyTheme, buildThemeGrid, checkBadges,
+  1181→    advanceTimer(ms) { return Game.advanceTime(ms); },
+  1182→    forceTimeUp() { gameOver("time"); },
+  1183→    placeAt(idx, r, c) {
+  1184→      const res = Game.place(idx, r, c);
+  1185→      if (res) {
+  1186→        Renderer.placeEffect(res);
+  1187→        updateBar();
+  1188→        if (res.over) gameOver("stuck");
+  1189→      }
+  1190→      return res;
+  1191→    },
+  1192→  };
+  1193→})();
+  1194→
