@@ -73,6 +73,22 @@ Ayrıca **her normal boot'ta** `/start.sh` → `.zscripts/dev.sh` otomatik çal�
 PostgreSQL'i başlatır, ana `.env`'i PostgreSQL URL'ine sabitler, `db:push` + seed
 yapar, 8 sunucuyu ayağa kaldırır.
 
+### Bellek notu (geliştirme sandbox'ı)
+Sandbox'ın 4GB RAM'i, 5 eşzamanlı Next.js **dev** sunucusu + derleme süreçlerini
+kaldıramaz (ERP dev ~1.7GB RSS yiyip OOM'a yol açıyordu). Bu yüzden `.zscripts/dev.sh`
+**ağır Next.js servislerini üretim modunda** çalıştırır:
+
+| Servis | Mod | RSS | Neden |
+|---|---|---|---|
+| gnc-inc (:3000) | **dev** | ~900MB | Aktif geliştirme hedefi |
+| gnc-erp (:3001) | **prod** | ~235MB | Süper-app, dev'i 5 kat şişer |
+| kaloriai (:3003) | **prod** | ~300MB | Aynı neden |
+| fruitstorm (:3004) | **prod** | ~250MB | Aynı neden |
+| randevu/cubiq/petguardian/gridpop | bun --hot | ~35MB | Zaten hafif |
+
+Üretim derlemesi yalnızca `.next/BUILD_ID` yoksa yapılır (ilk boot / sıfırlama
+sonrası birkaç dakika sürer; normal reboot'larda cache'ten gelir).
+
 **Bilinen tuzak:** bootstrap shell'i her seferinde `DATABASE_URL=file:…custom.db`
 export eder ve `.env`'i ezebilir. `prisma`/`next` komutlarından ÖNCE doğru URL'i
 export edin: `export DATABASE_URL=postgresql://gnc_inc_user:…@127.0.0.1:5432/gnc_inc`

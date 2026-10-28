@@ -104,11 +104,42 @@ else
 fi
 
 # ------------------------------------------------------------
-# 5) Mini-services (3001-3007) — her bağımsız repo kendi .env'iyle
+# 5) Mini-services (3001-3007)
+#    Ağır Next.js süper-uygulamalar (erp, kaloriai, fruitstorm) ÜRETİM modunda
+#    çalışır: dev sunucusu 4GB sandbox'ta ~1.7GB RSS yiyip OOM'a yol açıyordu;
+#    prod ~235MB + 10x hızlı. Derleme yoksa (makine sıfırlanması) otomatik yapılır.
+#    Hafif bun servisleri (randevu, cubiq, petguardian, gridpop) --hot dev kalır.
 # ------------------------------------------------------------
+PROD_NEXT=("gnc-erp:3001" "kaloriai:3003" "fruitstorm:3004")
+
+for svc_port in "${PROD_NEXT[@]}"; do
+  name="${svc_port%%:*}"; port="${svc_port##*:}"
+  dir="$PROJ/mini-services/$name"
+  [ -d "$dir" ] || { log "$name klasörü yok — atlandı."; continue; }
+  if port_open "$port"; then
+    log "$name :$port zaten açık — atlanıyor."
+    continue
+  fi
+  log "$name hazırlanıyor (üretim modu)…"
+  (
+    cd "$dir"
+    bun install > /tmp/mini-service-install.log 2>&1
+    [ -f prisma/schema.prisma ] && bunx prisma generate >> /tmp/mini-service-install.log 2>&1
+    [ -f prisma/schema.prisma ] && bunx prisma db push --accept-data-loss >> /tmp/mini-service-install.log 2>&1
+    if [ ! -f .next/BUILD_ID ]; then
+      echo "[dev.sh] $name: üretim derlemesi (ilk boot / sıfırlama sonrası — birkaç dakika)…" >> /tmp/mini-service-install.log 2>&1
+      [ "$name" = "kaloriai" ] && rm -f src/middleware.ts
+      NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 bunx next build >> /tmp/mini-service-install.log 2>&1
+    fi
+    exec env NODE_ENV=production node_modules/.bin/next start -p "$port"
+  ) > "/tmp/mini-service-$name.log" 2>&1 &
+  sleep 1
+done
+
 for dir in "$PROJ"/mini-services/*/; do
   name=$(basename "$dir")
   [ -f "$dir/package.json" ] || { log "$name: package.json yok, atlandı."; continue; }
+  case "$name" in gnc-erp|kaloriai|fruitstorm) continue ;; esac  # prod listesinde
   port="${PORTS[$name]:-}"
   if [ -n "$port" ] && port_open "$port"; then
     log "$name :$port zaten açık — atlanıyor."
@@ -122,7 +153,6 @@ for dir in "$PROJ"/mini-services/*/; do
       bun run dev
     fi
   ) > "/tmp/mini-service-$name.log" 2>&1 &
-  # port yetişsin — sıralı çakışma olmasın
   sleep 1
 done
 
