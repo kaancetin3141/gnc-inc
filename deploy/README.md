@@ -46,3 +46,34 @@ sudo bash deploy/guncelle.sh          # kod değişikliklerini canlıya al
 ```
 
 Ayrıntılı komut referansı: [`SUNUCU-KOMUTLARI.md`](./SUNUCU-KOMUTLARI.md)
+
+## Geliştirme Sandbox Kurtarma (makine sıfırlandıysa)
+
+Geliştirme sandbox'ı sıfırlandığında `/home/z` altındaki her şey silinir
+(PostgreSQL binary'leri, veritabanı, mini-services). **Tek komutla kurtarma:**
+
+```bash
+# gnc-inc deposu da silindiyse önce onu geri alın:
+git clone https://github.com/kaancetin3141/gnc-inc.git ~/my-project
+cd ~/my-project && git pull   # en güncel deploy dosyaları gelsin
+
+# SONRA TEK KOMUT:
+bash deploy/sandbox/kurtarma.sh
+```
+
+Bu komut sırayla (idempotent — varolanı atlar):
+1. PostgreSQL 17 `.deb`'lerini indirip kullanıcı modunda çıkarır (`~/pgdeb`)
+2. `initdb` + başlatma (`~/pgdata`, 127.0.0.1:5432)
+3. 5 veritabanı + rol kurar, `~/pg/credentials.md` yazar (`deploy/sandbox/setup-databases.mjs`)
+4. mini-services'in 7 reposunu geri klonlar
+5. eksik `.env` dosyalarını credentials.md'den onarır
+6. `.zscripts/dev.sh` ile tüm sunucuları kaldırır (ana site :3000 + :3001-:3007)
+
+Ayrıca **her normal boot'ta** `/start.sh` → `.zscripts/dev.sh` otomatik çalışır:
+PostgreSQL'i başlatır, ana `.env`'i PostgreSQL URL'ine sabitler, `db:push` + seed
+yapar, 8 sunucuyu ayağa kaldırır.
+
+**Bilinen tuzak:** bootstrap shell'i her seferinde `DATABASE_URL=file:…custom.db`
+export eder ve `.env`'i ezebilir. `prisma`/`next` komutlarından ÖNCE doğru URL'i
+export edin: `export DATABASE_URL=postgresql://gnc_inc_user:…@127.0.0.1:5432/gnc_inc`
+(bknz. `~/pg/credentials.md`). `.zscripts/dev.sh` bu düzeltmeyi her açılışta otomatik yapar.
