@@ -66,3 +66,22 @@ db/
 skills/
 prompt
 test
+
+# === GNC sandbox internals ===
+mini-services/
+worklog.md
+agent-ctx/
+.zscripts/
+.z-ai-config/
+Caddyfile
+examples/
+db/
+*.db
+*.db-journal
+skills/
+prompt
+test
+tests/
+tool-results/
+upload/
+download/

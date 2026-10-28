@@ -1,0 +1,20 @@
+# GNC kaloriai — port 3003
+[Unit]
+Description=GNC kaloriai (port 3003)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/kaloriai
+EnvironmentFile=-/opt/gnc/kaloriai/.env
+Environment=NODE_ENV=production
+ExecStart=node node_modules/next/dist/bin/next start -p 3003
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/kaloriai.log
+StandardError=append:/var/log/gnc/kaloriai.log
+
+[Install]
+WantedBy=multi-user.target

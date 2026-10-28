@@ -1,0 +1,20 @@
+# GNC cubiq — port 3005
+[Unit]
+Description=GNC cubiq (port 3005)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/cubiq
+EnvironmentFile=-/opt/gnc/cubiq/.env
+Environment=NODE_ENV=production
+ExecStart=bun server.ts
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/cubiq.log
+StandardError=append:/var/log/gnc/cubiq.log
+
+[Install]
+WantedBy=multi-user.target

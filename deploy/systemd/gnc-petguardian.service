@@ -1,0 +1,20 @@
+# GNC petguardian — port 3006
+[Unit]
+Description=GNC petguardian (port 3006)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/petguardian
+EnvironmentFile=-/opt/gnc/petguardian/.env
+Environment=NODE_ENV=production
+ExecStart=bun server.ts
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/petguardian.log
+StandardError=append:/var/log/gnc/petguardian.log
+
+[Install]
+WantedBy=multi-user.target

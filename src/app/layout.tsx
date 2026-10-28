@@ -1,38 +1,68 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
+import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/components/theme-provider";
+import { SITE } from "@/lib/site-config";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin", "latin-ext"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const mono = JetBrains_Mono({
+  variable: "--font-mono-sans",
+  subsets: ["latin", "latin-ext"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+  title: {
+    default: "GNC Inc — Yazılım ve Dijital Ürünler",
+    template: "%s | GNC Inc",
   },
+  description:
+    "GNC Inc: ERP/CRM'den yapay zekâ destekli beslenmeye, bulut oyunlarından mobil platformlara — 8 canlı dijital ürün, tek çatı. Next.js 16, PostgreSQL 17, Flutter.",
+  keywords: [
+    "GNC Inc",
+    "GNC Yazılım",
+    "ERP",
+    "CRM",
+    "randevu",
+    "KaloriAI",
+    "Fruit Storm",
+    "Cubiq",
+    "PetGuardian",
+    "GridPop",
+    "gncinc.online",
+  ],
+  authors: [{ name: "Kaan Çetin", url: SITE.github }],
+  creator: "Kaan Çetin",
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "GNC Inc — Yazılım ve Dijital Ürünler",
+    description:
+      "8 canlı dijital ürün: GNC ERP & CRM, Randevu, KaloriAI, Fruit Storm, Cubiq, PetGuardian, GridPop — tek çatı altında.",
+    url: "https://www.gncinc.online",
+    siteName: "GNC Inc",
+    locale: "tr_TR",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "GNC Inc — Yazılım ve Dijital Ürünler",
+    description: "8 canlı dijital ürün, tek çatı. gncinc.online",
   },
+  robots: { index: true, follow: true },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f7faf9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1210" },
+  ],
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -41,12 +71,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="tr" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        className={`${inter.variable} ${mono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster />
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

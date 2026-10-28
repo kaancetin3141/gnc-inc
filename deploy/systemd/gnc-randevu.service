@@ -1,0 +1,20 @@
+# GNC randevu — port 3002
+[Unit]
+Description=GNC randevu (port 3002)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/randevu
+EnvironmentFile=-/opt/gnc/randevu/.env
+Environment=NODE_ENV=production Environment=CRM_BASE_URL=http://127.0.0.1:3001 Environment=BASE_DOMAIN=gncinc.online
+ExecStart=bun index.ts
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/randevu.log
+StandardError=append:/var/log/gnc/randevu.log
+
+[Install]
+WantedBy=multi-user.target

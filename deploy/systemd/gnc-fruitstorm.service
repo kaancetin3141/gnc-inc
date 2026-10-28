@@ -1,0 +1,20 @@
+# GNC fruitstorm — port 3004
+[Unit]
+Description=GNC fruitstorm (port 3004)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/fruitstorm
+EnvironmentFile=-/opt/gnc/fruitstorm/.env
+Environment=NODE_ENV=production
+ExecStart=node node_modules/next/dist/bin/next start -p 3004
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/fruitstorm.log
+StandardError=append:/var/log/gnc/fruitstorm.log
+
+[Install]
+WantedBy=multi-user.target

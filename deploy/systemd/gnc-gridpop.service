@@ -1,0 +1,20 @@
+# GNC gridpop — port 3007
+[Unit]
+Description=GNC gridpop (port 3007)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/gridpop
+EnvironmentFile=-/opt/gnc/gridpop/.env
+Environment=NODE_ENV=production
+ExecStart=bun server.ts
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/gridpop.log
+StandardError=append:/var/log/gnc/gridpop.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+# GNC erp — port 3001
+[Unit]
+Description=GNC erp (port 3001)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gnc/gnc-erp
+EnvironmentFile=-/opt/gnc/gnc-erp/.env
+Environment=NODE_ENV=production
+ExecStart=node node_modules/next/dist/bin/next start -p 3001
+Restart=always
+RestartSec=6
+StandardOutput=append:/var/log/gnc/erp.log
+StandardError=append:/var/log/gnc/erp.log
+
+[Install]
+WantedBy=multi-user.target
