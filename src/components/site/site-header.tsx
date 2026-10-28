@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { Menu, Moon, Sun, ArrowUpRight } from "lucide-react";
@@ -40,13 +40,13 @@ function Logo() {
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
-  // SSR/güvenli mounted kontrolü — effect içinde setState olmadan (react-hooks kuralı)
-  const mounted = useSyncExternalStore(
-    () => () => {},
-    () => true,
-    () => false,
-  );
-  const dark = resolvedTheme === "dark";
+  // Klasik "mounted" deseni: ilk client render'ı SSR ile AYNI olmalı (hydration uyumu).
+  // (Bu yüzden setState effect içinde — next-themes'in kanonik yaklaşımı.)
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- mount sonrası tema ikonu senkronizasyonu; alternatifler hydration bozuluyor
+  useEffect(() => setMounted(true), []);
+  // SSR ile client ilk render'ı birebir aynı olmalı → mounted=false iken koyu varsay
+  const dark = mounted && resolvedTheme === "dark";
   return (
     <Button
       variant="ghost"
