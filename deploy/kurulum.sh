@@ -8,6 +8,11 @@
 #            fruitstorm(3004) cubiq(3005) petguardian(3006) gridpop(3007)
 #
 # Kullanım:  sudo bash deploy/kurulum.sh
+#   AWS EC2 (t3.micro dâhil): ssh -i key.pem ubuntu@<ip> sonrası aynı komut.
+#   t3.micro (1GB RAM) otomatik algılanır: 4GB swap + PostgreSQL düşük bellek
+#   profili + 1024MB Node derleme limiti + pm2 max_memory_restart uygulanır.
+#   AWS Security Group'ta 22/80/443 DIŞINDA port AÇMAYIN (nginx 3000-3007'yi
+#   proksiler). Ayrıntı: deploy/AWS-T3-KURULUM.md
 # Yeniden çalıştırılabilir (idempotent).
 # ============================================================================
 set -euo pipefail
@@ -39,10 +44,26 @@ apt-get update -y
 apt-get install -y curl git nginx postgresql postgresql-contrib \
   ca-certificates gnupg build-essential pkg-config ufw fail2ban
 
-# Swap (2GB — 4GB RAM'li VPS'ler için kritik)
+# Envanter: RAM ve disk (AWS t3.micro = 1GB RAM / 8-30GB EBS)
+TOTAL_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+DISK_FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+info "Sistem envanteri: ${TOTAL_MB}MB RAM, ${DISK_FREE_GB}GB boş disk"
+
+if [[ $DISK_FREE_GB -lt 8 ]]; then
+  err "Boş disk ${DISK_FREE_GB}GB — en az 12GB gerekir."
+  err "AWS: EC2 > Volume > Modify Volume ile 24GB'a büyütüp yeniden deneyin."
+  exit 1
+elif [[ $DISK_FREE_GB -lt 14 ]]; then
+  warn "Boş disk ${DISK_FREE_GB}GB — 5 uygulama + node_modules + derlemeler için 24GB önerilir."
+fi
+
+# Swap — RAM'e göre otomatik boyut (≤2GB RAM → 4GB; t3.micro için hayati)
+SWAP_SIZE="2G"; [[ $TOTAL_MB -le 2048 ]] && SWAP_SIZE="4G"
 if ! swapon --show | grep -q .; then
-  info "2GB swap oluşturuluyor…"
-  fallocate -l 2G /swapfile && chmod 600 /swapfile && swapon /swapfile
+  info "${SWAP_SIZE} swap oluşturuluyor (RAM: ${TOTAL_MB}MB)…"
+  fallocate -l "$SWAP_SIZE" /swapfile 2>/dev/null \
+    || dd if=/dev/zero of=/swapfile bs=1M count=$(( ${SWAP_SIZE%G} * 1024 )) status=progress
+  chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
   echo 'vm.swappiness=20' > /etc/sysctl.d/99-gnc.conf
   echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.d/99-gnc.conf
@@ -76,6 +97,24 @@ fi
 # ----------------------------------------------------------------------------
 info "PostgreSQL servisleri…"
 systemctl enable --now postgresql
+
+# Düşük bellek profili (≤2GB RAM — AWS t3.micro / t3.small vb.)
+if [[ $TOTAL_MB -le 2048 ]]; then
+  PGCONF_DIR=$(ls -d /etc/postgresql/*/main 2>/dev/null | sort -V | tail -1)
+  if [[ -n "$PGCONF_DIR" ]]; then
+    info "PostgreSQL düşük bellek profili uygulanıyor…"
+    mkdir -p "$PGCONF_DIR/conf.d"
+    cat > "$PGCONF_DIR/conf.d/99-gnc-lowmem.conf" <<'EOF'
+# GNC — ≤2GB RAM sunucular için PostgreSQL ayarları
+shared_buffers = 128MB
+effective_cache_size = 384MB
+work_mem = 4MB
+maintenance_work_mem = 48MB
+max_connections = 40
+EOF
+    systemctl restart postgresql
+  fi
+fi
 
 DBs=(
   "gnc_inc:gnc_inc_user"
@@ -160,11 +199,12 @@ done
 ( cd "$BASE_DIR/cubiq" && bun install && bunx prisma db push --accept-data-loss )
 ( cd "$BASE_DIR/randevu" && bun install 2>/dev/null || true )
 
-info "Üretim derlemeleri (output: standalone)…"
+BUILD_MEM=2048; [[ $TOTAL_MB -le 2048 ]] && BUILD_MEM=1024
+info "Üretim derlemeleri (output: standalone; Node heap limiti ${BUILD_MEM}MB — RAM'e göre)…"
 for app in gnc-inc gnc-erp kaloriai fruitstorm; do
   # KaloriAI: middleware.ts derlemeyi bozuyor — kaldır (repo içi dev script de aynısını yapar)
   [[ "$app" == "kaloriai" ]] && rm -f "$BASE_DIR/$app/src/middleware.ts" || true
-  ( cd "$BASE_DIR/$app" && NODE_OPTIONS=--max-old-space-size=2048 NEXT_TELEMETRY_DISABLED=1 \
+  ( cd "$BASE_DIR/$app" && NODE_OPTIONS=--max-old-space-size=$BUILD_MEM NEXT_TELEMETRY_DISABLED=1 \
      node_modules/.bin/next build )  # node runtime — `bunx` React SSR prerender'ı kırıyor
   # standalone ağacına statik varlıkları taşı
   if [[ -d "$BASE_DIR/$app/.next/standalone" ]]; then
@@ -189,23 +229,25 @@ info "pm2 süreçleri tanımlanıyor…"
 cat > "$BASE_DIR/ecosystem.config.cjs" <<EOF
 // GNC ekosistemi — pm2 süreç tanımları (port 3000-3007)
 // Bu dosya kurulum.sh tarafından parolalarla birlikte üretilir (0600 önerilir).
+// max_memory_restart: süreç şişerse pm2 otomatik yeniden başlatır — düşük RAM'li
+// sunucularda (t3.micro) çekirdek OOM katilinden önce davranmış oluruz.
 module.exports = {
   apps: [
-    { name: "gnc-inc",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: ".next/standalone/server.js",
+    { name: "gnc-inc",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: ".next/standalone/server.js", max_memory_restart: "300M",
       env: { NODE_ENV: "production", PORT: "3000", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL gnc_inc_user "${PASS[gnc_inc]}" gnc_inc)", NEXT_PUBLIC_SERVICES_MODE: "production" } },
-    { name: "gnc-erp",     cwd: "$BASE_DIR/gnc-erp",     script: "bun", args: ".next/standalone/server.js",
+    { name: "gnc-erp",     cwd: "$BASE_DIR/gnc-erp",     script: "bun", args: ".next/standalone/server.js", max_memory_restart: "400M",
       env: { NODE_ENV: "production", PORT: "3001", HOSTNAME: "127.0.0.1", TZ: "Europe/Istanbul", DATABASE_URL: "$(PGURL gnc_erp_user "${PASS[gnc_erp]}" gnc_erp)" } },
-    { name: "randevu",     cwd: "$BASE_DIR/randevu",     script: "bun", args: "index.ts",
+    { name: "randevu",     cwd: "$BASE_DIR/randevu",     script: "bun", args: "index.ts", max_memory_restart: "150M",
       env: { NODE_ENV: "production", CRM_BASE_URL: "http://127.0.0.1:3001", BASE_DOMAIN: "$DOMAIN" } },
-    { name: "kaloriai",    cwd: "$BASE_DIR/kaloriai",    script: "bun", args: ".next/standalone/server.js",
+    { name: "kaloriai",    cwd: "$BASE_DIR/kaloriai",    script: "bun", args: ".next/standalone/server.js", max_memory_restart: "400M",
       env: { NODE_ENV: "production", PORT: "3003", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL kaloriai_user "${PASS[kaloriai]}" kaloriai)" } },
-    { name: "fruitstorm",  cwd: "$BASE_DIR/fruitstorm",  script: "bun", args: ".next/standalone/server.js",
+    { name: "fruitstorm",  cwd: "$BASE_DIR/fruitstorm",  script: "bun", args: ".next/standalone/server.js", max_memory_restart: "350M",
       env: { NODE_ENV: "production", PORT: "3004", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL fruitstorm_user "${PASS[fruitstorm]}" fruitstorm)" } },
-    { name: "cubiq",       cwd: "$BASE_DIR/cubiq",       script: "bun", args: "server.ts",
+    { name: "cubiq",       cwd: "$BASE_DIR/cubiq",       script: "bun", args: "server.ts", max_memory_restart: "150M",
       env: { NODE_ENV: "production" } },
-    { name: "petguardian", cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/petguardian.ts",
+    { name: "petguardian", cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/petguardian.ts", max_memory_restart: "150M",
       env: { NODE_ENV: "production" } },
-    { name: "gridpop",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/gridpop.ts",
+    { name: "gridpop",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/gridpop.ts", max_memory_restart: "150M",
       env: { NODE_ENV: "production" } },
   ],
 };

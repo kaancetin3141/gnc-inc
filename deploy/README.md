@@ -7,6 +7,7 @@ Bu klasör, **GNC ekosisteminin tamamına ait sunucu kurulum dosyalarını** bar
 deploy/
 ├── hazirlik.sh                   # SIFIR sunucuda tek komutla hazır hale getirir (curl | sudo bash)
 ├── kurulum.sh                    # Tek komutla tam kurulum (PG17 + 8 servis + nginx + SSL)
+├── AWS-T3-KURULUM.md             # 🆕 AWS EC2 t3.micro (1GB RAM) adım adım kurulum rehberi
 ├── guncelle.sh                   # Tek komutla tüm ekosistemi güncelle (git pull + build + restart)
 ├── servis.sh                     # Tek komutla servis yönetimi (durum | baslat | durdur | saglik | loglar)
 ├── backup.sh                     # Günlük PostgreSQL + upload yedeklemesi (14 gün rotasyon)
