@@ -167,16 +167,24 @@ for entry in "${SERVICES[@]}"; do
         # "prerender /_global-error → useContext null" — Node ile sorun yok.
         (
           flock 9
-          NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 \
+          NODE_OPTIONS="--max-old-space-size=1500" NEXT_TELEMETRY_DISABLED=1 \
             node_modules/.bin/next build >> "/tmp/mini-service-$2.log" 2>&1
         ) 9>/tmp/gnc-next-build.lock
       fi
-      # output:standalone — statik varlıkları standalone ağacına taşı
-      if [ -d .next/standalone ]; then
-        cp -r .next/static .next/standalone/.next/ >> "/tmp/mini-service-$2.log" 2>&1 || true
-        [ -d public ] && cp -r public .next/standalone/ >> "/tmp/mini-service-$2.log" 2>&1 || true
+      # output:standalone — server.js konumunu bul (workspace root çıkarımı yolu
+      # yansıtabilir: .next/standalone/mini-services/<ad>/server.js)
+      SJS=".next/standalone/server.js"
+      if [ ! -f "$SJS" ]; then
+        found=$(find .next/standalone -name server.js -type f 2>/dev/null | head -1)
+        [ -n "$found" ] && SJS="$found"
+      fi
+      if [ -f "$SJS" ]; then
+        appdir=$(dirname "$SJS")
+        mkdir -p "$appdir/.next" 2>/dev/null || true
+        cp -r .next/static "$appdir/.next/" >> "/tmp/mini-service-$2.log" 2>&1 || true
+        [ -d public ] && cp -r public "$appdir/" >> "/tmp/mini-service-$2.log" 2>&1 || true
         exec env NODE_ENV=production PORT="$4" HOSTNAME=127.0.0.1 \
-          bun .next/standalone/server.js
+          bun "$SJS"
       else
         exec env NODE_ENV=production node_modules/.bin/next start -p "$4"
       fi
