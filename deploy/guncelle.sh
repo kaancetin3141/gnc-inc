@@ -78,25 +78,21 @@ for r in "${PRISMA_REPOS[@]}"; do
 done
 
 # ----------------------------------------------------------------------------
-# 4) Üretim derlemeleri
+# 4) Üretim derlemeleri (output: standalone — statik varlıklar da taşınır)
 # ----------------------------------------------------------------------------
 for r in "${BUILD_REPOS[@]}"; do
   d="$BASE_DIR/$r"
   [[ -d "$d" ]] || continue
+  # KaloriAI: middleware.ts derlemeyi bozuyor — kaldır (repo içi dev script de aynısını yapar)
+  [[ "$r" == "kaloriai" ]] && rm -f "$d/src/middleware.ts" || true
   info "$r: next build…"
-  ( cd "$d" && NODE_OPTIONS=--max-old-space-size=2048 bunx next build )
+  ( cd "$d" && NODE_OPTIONS=--max-old-space-size=2048 NEXT_TELEMETRY_DISABLED=1 \
+     node_modules/.bin/next build )  # node runtime — `bunx` React SSR prerender'ı kırıyor
+  if [[ -d "$d/.next/standalone" ]]; then
+    cp -r "$d/.next/static" "$d/.next/standalone/.next/"
+    if [[ -d "$d/public" ]]; then cp -r "$d/public" "$d/.next/standalone/"; fi
+  fi
 done
-
-# Flutter statikleri (SDK varsa)
-if command -v flutter >/dev/null; then
-  for r in petguardian gridpop; do
-    [[ -d "$BASE_DIR/$r" ]] || continue
-    info "$r: flutter build web…"
-    ( cd "$BASE_DIR/$r" && flutter pub get && flutter build web --release )
-  done
-else
-  warn "Flutter SDK yok — petguardian/gridpop web build atlandı"
-fi
 
 # ----------------------------------------------------------------------------
 # 5) Yeniden başlat (sırayla — önce veri katmanı sahibi ERP)

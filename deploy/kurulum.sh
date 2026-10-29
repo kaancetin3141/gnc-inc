@@ -160,20 +160,18 @@ done
 ( cd "$BASE_DIR/cubiq" && bun install && bunx prisma db push --accept-data-loss )
 ( cd "$BASE_DIR/randevu" && bun install 2>/dev/null || true )
 
-info "Üretim derlemeleri…"
+info "Üretim derlemeleri (output: standalone)…"
 for app in gnc-inc gnc-erp kaloriai fruitstorm; do
-  ( cd "$BASE_DIR/$app" && NODE_OPTIONS=--max-old-space-size=2048 bunx next build )
+  # KaloriAI: middleware.ts derlemeyi bozuyor — kaldır (repo içi dev script de aynısını yapar)
+  [[ "$app" == "kaloriai" ]] && rm -f "$BASE_DIR/$app/src/middleware.ts" || true
+  ( cd "$BASE_DIR/$app" && NODE_OPTIONS=--max-old-space-size=2048 NEXT_TELEMETRY_DISABLED=1 \
+     node_modules/.bin/next build )  # node runtime — `bunx` React SSR prerender'ı kırıyor
+  # standalone ağacına statik varlıkları taşı
+  if [[ -d "$BASE_DIR/$app/.next/standalone" ]]; then
+    cp -r "$BASE_DIR/$app/.next/static" "$BASE_DIR/$app/.next/standalone/.next/"
+    if [[ -d "$BASE_DIR/$app/public" ]]; then cp -r "$BASE_DIR/$app/public" "$BASE_DIR/$app/.next/standalone/"; fi
+  fi
 done
-
-# Flutter statikleri (Flutter SDK varsa)
-if ! command -v flutter >/dev/null; then
-  warn "Flutter SDK bulunamadı — petguardian/gridpop web build atlanıyor."
-  warn "Kurulum: https://docs.flutter.dev/get-started/install/linux ardından yeniden çalıştırın."
-else
-  for app in petguardian gridpop; do
-    ( cd "$BASE_DIR/$app" && flutter pub get && flutter build web --release )
-  done
-fi
 
 # Seed'ler
 info "Seed verileri…"
@@ -182,24 +180,37 @@ info "Seed verileri…"
 ( cd "$BASE_DIR/gnc-erp" && curl -s -X POST http://127.0.0.1:3001/api/seed >/dev/null || true )
 
 # ----------------------------------------------------------------------------
-# 6) pm2 ile servisler
+# 6) pm2 ile servisler — TÜM Next uygulamaları output:standalone olduğu için
+#    .next/standalone/server.js + PORT env ile çalışır (next start KULLANILMAZ).
+#    petguardian/gridpop: Flutter repoları sunucu çalıştırmaz; gnc-inc içindeki
+#    mini-landing vitrinleri 3006/3007'yi servisler.
 # ----------------------------------------------------------------------------
 info "pm2 süreçleri tanımlanıyor…"
-cat > "$BASE_DIR/ecosystem.config.cjs" <<'EOF'
+cat > "$BASE_DIR/ecosystem.config.cjs" <<EOF
 // GNC ekosistemi — pm2 süreç tanımları (port 3000-3007)
+// Bu dosya kurulum.sh tarafından parolalarla birlikte üretilir (0600 önerilir).
 module.exports = {
   apps: [
-    { name: "gnc-inc",     cwd: "/opt/gnc/gnc-inc",     script: "node_modules/next/dist/bin/next", args: "start -p 3000", env: { NODE_ENV: "production" } },
-    { name: "gnc-erp",     cwd: "/opt/gnc/gnc-erp",     script: "node_modules/next/dist/bin/next", args: "start -p 3001", env: { NODE_ENV: "production" } },
-    { name: "randevu",     cwd: "/opt/gnc/randevu",     script: "bun", args: "index.ts",          env: { NODE_ENV: "production", CRM_BASE_URL: "http://127.0.0.1:3001", BASE_DOMAIN: "gncinc.online", PORT: "3002" } },
-    { name: "kaloriai",    cwd: "/opt/gnc/kaloriai",    script: "node_modules/next/dist/bin/next", args: "start -p 3003", env: { NODE_ENV: "production" } },
-    { name: "fruitstorm",  cwd: "/opt/gnc/fruitstorm",  script: "node_modules/next/dist/bin/next", args: "start -p 3004", env: { NODE_ENV: "production" } },
-    { name: "cubiq",       cwd: "/opt/gnc/cubiq",       script: "bun", args: "server.ts",         env: { NODE_ENV: "production" } },
-    { name: "petguardian", cwd: "/opt/gnc/petguardian", script: "bun", args: "server.ts",         env: { NODE_ENV: "production" } },
-    { name: "gridpop",     cwd: "/opt/gnc/gridpop",     script: "bun", args: "server.ts",         env: { NODE_ENV: "production" } },
+    { name: "gnc-inc",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: ".next/standalone/server.js",
+      env: { NODE_ENV: "production", PORT: "3000", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL gnc_inc_user "${PASS[gnc_inc]}" gnc_inc)", NEXT_PUBLIC_SERVICES_MODE: "production" } },
+    { name: "gnc-erp",     cwd: "$BASE_DIR/gnc-erp",     script: "bun", args: ".next/standalone/server.js",
+      env: { NODE_ENV: "production", PORT: "3001", HOSTNAME: "127.0.0.1", TZ: "Europe/Istanbul", DATABASE_URL: "$(PGURL gnc_erp_user "${PASS[gnc_erp]}" gnc_erp)" } },
+    { name: "randevu",     cwd: "$BASE_DIR/randevu",     script: "bun", args: "index.ts",
+      env: { NODE_ENV: "production", CRM_BASE_URL: "http://127.0.0.1:3001", BASE_DOMAIN: "$DOMAIN" } },
+    { name: "kaloriai",    cwd: "$BASE_DIR/kaloriai",    script: "bun", args: ".next/standalone/server.js",
+      env: { NODE_ENV: "production", PORT: "3003", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL kaloriai_user "${PASS[kaloriai]}" kaloriai)" } },
+    { name: "fruitstorm",  cwd: "$BASE_DIR/fruitstorm",  script: "bun", args: ".next/standalone/server.js",
+      env: { NODE_ENV: "production", PORT: "3004", HOSTNAME: "127.0.0.1", DATABASE_URL: "$(PGURL fruitstorm_user "${PASS[fruitstorm]}" fruitstorm)" } },
+    { name: "cubiq",       cwd: "$BASE_DIR/cubiq",       script: "bun", args: "server.ts",
+      env: { NODE_ENV: "production" } },
+    { name: "petguardian", cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/petguardian.ts",
+      env: { NODE_ENV: "production" } },
+    { name: "gridpop",     cwd: "$BASE_DIR/gnc-inc",     script: "bun", args: "mini-landing/gridpop.ts",
+      env: { NODE_ENV: "production" } },
   ],
 };
 EOF
+chmod 600 "$BASE_DIR/ecosystem.config.cjs"
 pm2 start "$BASE_DIR/ecosystem.config.cjs" --update-env
 pm2 save
 

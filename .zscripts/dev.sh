@@ -111,6 +111,8 @@ for entry in "${SERVICES[@]}"; do
     log "$name :$port zaten açık — atlanıyor."
     continue
   fi
+  # Bayat kurulum/derleme süreçlerini temizle (yetenek yarışını önle)
+  pkill -f "mini-services/$name" 2>/dev/null && sleep 1 || true
 
   # 4c) .env — repo'da yoksa doğru DB URL'ini yaz (varsa DATABASE_URL garanti et)
   #     DB adı = klasör adının alt çizgili hali (gnc-erp → gnc_erp);
@@ -132,9 +134,9 @@ for entry in "${SERVICES[@]}"; do
       sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\"$dburl\"|" "$dir/.env" 2>/dev/null
     fi
   fi
-  # Randevu → ERP API'sine bağlanır
-  if [ "$name" = "randevu" ] && ! grep -q "^CRM_BASE=" "$dir/.env" 2>/dev/null; then
-    printf 'CRM_BASE=http://127.0.0.1:3001/api\n' >> "$dir/.env"
+  # Randevu → ERP API'sine bağlanır (doğru env adı: CRM_BASE_URL)
+  if [ "$name" = "randevu" ] && ! grep -q "^CRM_BASE_URL=" "$dir/.env" 2>/dev/null; then
+    printf 'CRM_BASE_URL=http://127.0.0.1:3001\nBASE_DOMAIN=gncinc.online\n' >> "$dir/.env"
   fi
 
   # 4d) Kurulum + başlatma (arka planda; log: /tmp/mini-service-*.log)
@@ -146,19 +148,38 @@ for entry in "${SERVICES[@]}"; do
     set -u
     cd "$1"
     if [ -n "${5:-}" ]; then export DATABASE_URL="$5"; else unset DATABASE_URL; fi
-    export NODE_ENV=development
+    # NODE_ENV moda göre: prod derlemede development React prerender hatasi veriyor!
+    if [ "$3" = "prod" ]; then export NODE_ENV=production; else export NODE_ENV=development; fi
     bun install >> "/tmp/mini-service-$2.log" 2>&1
     if [ -f prisma/schema.prisma ] && [ -n "${5:-}" ]; then
       bunx prisma generate >> "/tmp/mini-service-$2.log" 2>&1
       bunx prisma db push --accept-data-loss >> "/tmp/mini-service-$2.log" 2>&1
     fi
     if [ "$3" = "prod" ]; then
-      if [ ! -f .next/BUILD_ID ]; then
+      # KaloriAI: middleware.ts derlemeyi bozuyor — kaldır (repo içi dev script de aynısını yapar)
+      [ "$2" = "kaloriai" ] && rm -f src/middleware.ts || true
+      # Derleme ölçütü: .next/standalone/server.js (BUILD_ID derleme bitmeden yazılabilir!)
+      if [ ! -f .next/standalone/server.js ]; then
         echo "[$2] üretim derlemesi (birkaç dakika)…" >> "/tmp/mini-service-$2.log" 2>&1
-        NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 \
-          bunx next build >> "/tmp/mini-service-$2.log" 2>&1
+        # Aynı anda tek derleme — 3 paralel next build 4GB RAMde OOM yapar.
+        # ÖNEMLİ: Node runtime ile derle (node_modules/.bin/next → node shebang).
+        # `bunx next build` Bun runtime içinde React SSR dispatcherini kırıyor:
+        # "prerender /_global-error → useContext null" — Node ile sorun yok.
+        (
+          flock 9
+          NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 \
+            node_modules/.bin/next build >> "/tmp/mini-service-$2.log" 2>&1
+        ) 9>/tmp/gnc-next-build.lock
       fi
-      exec env NODE_ENV=production node_modules/.bin/next start -p "$4"
+      # output:standalone — statik varlıkları standalone ağacına taşı
+      if [ -d .next/standalone ]; then
+        cp -r .next/static .next/standalone/.next/ >> "/tmp/mini-service-$2.log" 2>&1 || true
+        [ -d public ] && cp -r public .next/standalone/ >> "/tmp/mini-service-$2.log" 2>&1 || true
+        exec env NODE_ENV=production PORT="$4" HOSTNAME=127.0.0.1 \
+          bun .next/standalone/server.js
+      else
+        exec env NODE_ENV=production node_modules/.bin/next start -p "$4"
+      fi
     else
       exec bun run dev
     fi

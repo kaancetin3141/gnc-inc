@@ -50,28 +50,36 @@ Ayrıntılı komut referansı: [`SUNUCU-KOMUTLARI.md`](./SUNUCU-KOMUTLARI.md)
 ## Geliştirme Sandbox Kurtarma (makine sıfırlandıysa)
 
 Geliştirme sandbox'ı sıfırlandığında `/home/z` altındaki her şey silinir
-(PostgreSQL binary'leri, veritabanı, mini-services). **Tek komutla kurtarma:**
+(PostgreSQL binary'leri, veritabanı, mini-services). **Kurtarma artık tek
+komut ve tamamen kendini onarır:**
 
 ```bash
 # gnc-inc deposu da silindiyse önce onu geri alın:
 git clone https://github.com/kaancetin3141/gnc-inc.git ~/my-project
-cd ~/my-project && git pull   # en güncel deploy dosyaları gelsin
 
-# SONRA TEK KOMUT:
-bash deploy/sandbox/kurtarma.sh
+# SONRA TEK KOMUT (her şeyi kendisi onarır):
+bash ~/my-project/.zscripts/dev.sh
 ```
 
 Bu komut sırayla (idempotent — varolanı atlar):
 1. PostgreSQL 17 `.deb`'lerini indirip kullanıcı modunda çıkarır (`~/pgdeb`)
-2. `initdb` + başlatma (`~/pgdata`, 127.0.0.1:5432)
-3. 5 veritabanı + rol kurar, `~/pg/credentials.md` yazar (`deploy/sandbox/setup-databases.mjs`)
-4. mini-services'in 7 reposunu geri klonlar
-5. eksik `.env` dosyalarını credentials.md'den onarır
-6. `.zscripts/dev.sh` ile tüm sunucuları kaldırır (ana site :3000 + :3001-:3007)
+2. `initdb` + başlatma (`~/pgdata`, 127.0.0.1:5432) + rol + 5 veritabanı
+3. Ana `.env`'i PostgreSQL URL'ine sabitler, `db:push` + seed yapar
+4. mini-services'in 5 web reposunu geri klonlar (token `.zscripts/.github-token`)
+5. Her servisi **kendi veritabanına** izole edilmiş env'le kurar ve başlatır
+6. `mini-landing/` vitrinleriyle :3006 (PetGuardian) ve :3007 (GridPop)'yi açar
 
-Ayrıca **her normal boot'ta** `/start.sh` → `.zscripts/dev.sh` otomatik çalışır:
-PostgreSQL'i başlatır, ana `.env`'i PostgreSQL URL'ine sabitler, `db:push` + seed
-yapar, 8 sunucuyu ayağa kaldırır.
+Ayrıca **her normal boot'ta** `/start.sh` → `.zscripts/dev.sh` otomatik çalışır.
+
+> Not: `.zscripts/.github-token` dosyası repoya commit edilmez (.gitignore).
+> Reset sonrası özel repoların klonlanması için token'ı yeniden yerleştirin.
+
+### Mobil ürün vitrinleri (mini-landing)
+
+PetGuardian ve GridPop Flutter uygulamalarıdır; sunucu süreçleri yoktur.
+`:3006` ve `:3007` portlarını, `mini-landing/` altındaki sıfır bağımlılık
+Bun vitrin sunucuları servisler — GNC markalı ürün tanıtım sayfaları.
+Kaynak kodu bu depoda olduğu için resetlerde kaybolmaz.
 
 ### Bellek notu (geliştirme sandbox'ı)
 Sandbox'ın 4GB RAM'i, 5 eşzamanlı Next.js **dev** sunucusu + derleme süreçlerini
@@ -86,8 +94,13 @@ kaldıramaz (ERP dev ~1.7GB RSS yiyip OOM'a yol açıyordu). Bu yüzden `.zscrip
 | fruitstorm (:3004) | **prod** | ~250MB | Aynı neden |
 | randevu/cubiq/petguardian/gridpop | bun --hot | ~35MB | Zaten hafif |
 
-Üretim derlemesi yalnızca `.next/BUILD_ID` yoksa yapılır (ilk boot / sıfırlama
-sonrası birkaç dakika sürer; normal reboot'larda cache'ten gelir).
+Üretim derlemesi yalnızca `.next/standalone/server.js` yoksa yapılır (ilk
+boot / sıfırlama sonrası birkaç dakika sürer; normal reboot'larda cache'ten
+gelir). Derlemeler `flock` ile **serileştirilmiştir** — 3 paralel `next build`
+4GB RAM'i aşırıp OOM yapmasın diye aynı anda yalnızca bir derleme çalışır.
+Tüm Next.js uygulamaları `output: standalone` üretir; sunucu
+`.next/standalone/server.js` + `PORT` env ile ayağa kalkar (`next start`
+standalone ile çalışmaz).
 
 **Bilinen tuzak:** bootstrap shell'i her seferinde `DATABASE_URL=file:…custom.db`
 export eder ve `.env`'i ezebilir. `prisma`/`next` komutlarından ÖNCE doğru URL'i
