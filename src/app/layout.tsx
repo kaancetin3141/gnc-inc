@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     "GridPop",
     "gncinc.online",
   ],
-  authors: [{ name: "Kaan Çetin", url: SITE.github }],
+  authors: [{ name: "Kaan Çetin" }],
   creator: "Kaan Çetin",
   openGraph: {
     title: "GNC Inc — Yazılım ve Dijital Ürünler",

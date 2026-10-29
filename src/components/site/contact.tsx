@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Send, Mail, Github, MapPin, Loader2 } from "lucide-react";
+import { Send, Mail, MapPin, Loader2, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,7 +11,7 @@ import { SITE } from "@/lib/site-config";
 
 const QUICK_LINKS = [
   { icon: Mail, label: SITE.email, href: `mailto:${SITE.email}` },
-  { icon: Github, label: "GitHub — kaancetin3141", href: SITE.github, external: true },
+  { icon: Phone, label: "+90 (850) 000 00 00", href: "tel:+908500000000" },
   { icon: MapPin, label: "İstanbul, Türkiye", href: null as unknown as string, static: true },
 ];
 

@@ -1,160 +1,184 @@
 #!/bin/bash
 # ============================================================
-# GNC Inc — Boot akışı (dev.sh)
+# GNC Inc — Kendini onaran boot akışı (dev.sh)
 # /start.sh bu dosyayı bulursa varsayılan akış YERİNE bunu çalıştırır.
-# Sıra: PostgreSQL → (gerekirse) DB+rol kurulumu → .env onarımı →
-#       ana sunucu (3000) → mini-services (3001-3007)
-# Çalıştırma: /start.sh boot'ta otomatik — `bash .zscripts/dev.sh` ile elle de olur.
+#
+# Zincir: .env onarımı → PostgreSQL self-heal → ana sunucu (3000) →
+#         mini-services (3001-3007; eksik repo'lar token ile yeniden klonlanır)
+#
+# Her şey idempotent: sandbox sıfırlansa bile tek çalışışla tüm ekosistem döner.
+# Elle çalıştırma: bash /home/z/my-project/.zscripts/dev.sh
 # ============================================================
 set -uo pipefail
 
 PROJ=/home/z/my-project
-export PGBIN=/home/z/pgdeb/root/usr/lib/postgresql/17/bin
-export LD_LIBRARY_PATH=/home/z/pgdeb/root/usr/lib/x86_64-linux-gnu
-export DATA=/home/z/pgdata
+ZS="$PROJ/.zscripts"
+PASS='tvDeCsv34LR3XtQLpm2i'
+ROLE=gnc_inc_user
 export NEXT_TELEMETRY_DISABLED=1
 
-# Port haritası — servis klasörü adı → sabit port (site-config ile uyumlu)
-declare -A PORTS=(
-  [gnc-inc]=3000 [gnc-erp]=3001 [randevu]=3002 [kaloriai]=3003
-  [fruitstorm]=3004 [cubiq]=3005 [petguardian]=3006 [gridpop]=3007
+# Servis: klasör adı | repo adı | port | mod (prod=next build+start, dev=bun --hot)
+#   gnc-erp / kaloriai / fruitstorm → ağır Next süper-uygulamalar, ÜRETİM modunda
+#   (dev sunucusu 4GB sandbox'ta ~1.7GB RSS yiyip OOM'a yol açıyordu; prod ~235MB).
+#   randevu / cubiq → hafif Bun servisleri, --hot dev.
+SERVICES=(
+  "gnc-erp|gnc-erp|3001|prod"
+  "randevu|randevu|3002|dev"
+  "kaloriai|KaloriAI|3003|prod"
+  "fruitstorm|fruit-storm|3004|prod"
+  "cubiq|cubiq|3005|dev"
 )
 
 log() { echo "[dev.sh $(date +%H:%M:%S)] $*"; }
-
-port_open() { ss -tln 2>/dev/null | grep -q ":$1 " ; }
-
-# ------------------------------------------------------------
-# 1) PostgreSQL 17 — binary yoksa (sandbox sıfırlanmış) devam edemediğimizi
-#    net söyle, kalan adımlar yine denensin.
-# ------------------------------------------------------------
-PG_OK=0
-if [ -x "$PGBIN/pg_ctl" ]; then
-  if "$PGBIN/pg_ctl" -D "$DATA" status >/dev/null 2>&1; then
-    log "PostgreSQL zaten çalışıyor."
-    PG_OK=1
-  else
-    if bash /home/z/pg/start.sh; then
-      log "PostgreSQL başlatıldı."
-      PG_OK=1
-    else
-      log "HATA: PostgreSQL başlatılamadı — $DATA/postgres.log'a bakın."
-    fi
-  fi
-else
-  log "UYARI: PostgreSQL binary'leri yok (/home/z/pgdeb). Kurtarma: deploy/README.md → Sandbox Kurtarma."
-fi
+port_open() { ss -tln 2>/dev/null | grep -q ":$1 "; }
+kill_port() { # portu dinleyen süreci kibarca durdur
+  local pid
+  pid=$(lsof -ti :"$1" 2>/dev/null | head -1)
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null && sleep 2 && kill -9 "$pid" 2>/dev/null
+  return 0
+}
 
 # ------------------------------------------------------------
-# 2) Veritabanları + rollar — SADECE eksikse kurulum çalışsın
-#    (setup-db.mjs her koşuda rastgele şifre üretir; varolanı BOZMAMAK için
-#     yalnızca gnc_erp DB'si yokken çalıştır.)
+# 1) .env — bootstrap her açılışta SQLite URL yazabiliyor; ÖNCE onar
 # ------------------------------------------------------------
-if [ "$PG_OK" = "1" ]; then
-  ERP_EXISTS=$("$PGBIN/psql" -h /tmp -U postgres -d postgres -t -A -c \
-    "SELECT 1 FROM pg_database WHERE datname='gnc_erp'" 2>/dev/null | tr -d '[:space:]')
-  if [ "$ERP_EXISTS" != "1" ]; then
-    log "Veritabanları eksik — setup-db.mjs çalışıyor (5 DB + rol)…"
-    bun /home/z/pg/setup-db.mjs || log "HATA: DB kurulumu başarısız."
-  else
-    log "Veritabanları hazır (gnc_inc, gnc_erp, kaloriai, fruitstorm, cubiq)."
-  fi
-
-  # Mini-service .env'leri eksikse credentials.md'den onar
-  for entry in gnc_erp:gnc-erp kaloriai:kaloriai fruitstorm:fruitstorm cubiq:cubiq; do
-    db="${entry%%:*}"; svc="${entry##*:}"
-    envfile="$PROJ/mini-services/$svc/.env"
-    if [ ! -f "$envfile" ] && [ -f /home/z/pg/credentials.md ]; then
-      url=$(grep -o "postgresql://[^\`]*@127.0.0.1:5432/$db\`" /home/z/pg/credentials.md \
-        | head -1 | tr -d '\`')
-      if [ -n "$url" ]; then
-        printf 'DATABASE_URL="%s"\n' "$url" > "$envfile"
-        log "$svc/.env onarıldı (credentials.md)."
-      fi
-    fi
-  done
-fi
-
-# ------------------------------------------------------------
-# 3) Ana .env — bootstrap sıfırlamada SQLite URL yazabiliyor; her açılışta
-#    doğru PostgreSQL URL'ini garanti et (env var da export ediliyor ki
-#    shell'e bulaşmış eski değer ezilsin).
-# ------------------------------------------------------------
+mkdir -p "$PROJ"
 cat > "$PROJ/.env" <<'EOF'
 DATABASE_URL=postgresql://gnc_inc_user:tvDeCsv34LR3XtQLpm2i@127.0.0.1:5432/gnc_inc
 NEXT_PUBLIC_SERVICES_MODE=sandbox
 EOF
-export DATABASE_URL=postgresql://gnc_inc_user:tvDeCsv34LR3XtQLpm2i@127.0.0.1:5432/gnc_inc
+export DATABASE_URL="postgresql://$ROLE:$PASS@127.0.0.1:5432/gnc_inc"
 log ".env PostgreSQL URL'ine sabitlendi."
 
 # ------------------------------------------------------------
-# 4) Ana sunucu (gnc-inc, port 3000)
+# 2) PostgreSQL 17 — tam self-heal (binary → data → sunucu → rol + 5 DB)
 # ------------------------------------------------------------
-cd "$PROJ"
-if port_open "${PORTS[gnc-inc]}"; then
-  log "Ana sunucu :3000 zaten açık — atlanıyor."
+if bash "$PROJ/scripts/pg-ensure.sh"; then
+  log "PostgreSQL hazır."
+  export LD_LIBRARY_PATH=/home/z/pgdeb/root/usr/lib/x86_64-linux-gnu
 else
-  log "Ana sunucu hazırlanıyor: bun install…"
-  bun install > /tmp/boot-main-install.log 2>&1 || log "UYARI: bun install hata verdi."
-  bunx prisma generate > /tmp/boot-main-prisma.log 2>&1 || log "UYARI: prisma generate hata verdi."
-  bun run db:push >> /tmp/boot-main-prisma.log 2>&1 || log "UYARI: db:push hata verdi."
-  bun prisma/seed.ts >> /tmp/boot-main-prisma.log 2>&1 || log "UYARI: seed hata verdi."
-  log "Ana sunucu başlıyor (:3000)…"
-  ( bun run dev > /tmp/boot-main-dev.log 2>&1 & )
+  log "UYARI: PostgreSQL kurulamadı — site veritabanısız devam ediyor."
 fi
 
 # ------------------------------------------------------------
-# 5) Mini-services (3001-3007)
-#    Ağır Next.js süper-uygulamalar (erp, kaloriai, fruitstorm) ÜRETİM modunda
-#    çalışır: dev sunucusu 4GB sandbox'ta ~1.7GB RSS yiyip OOM'a yol açıyordu;
-#    prod ~235MB + 10x hızlı. Derleme yoksa (makine sıfırlanması) otomatik yapılır.
-#    Hafif bun servisleri (randevu, cubiq, petguardian, gridpop) --hot dev kalır.
+# 3) Ana sunucu (gnc-inc, :3000) — kod/şema değişince güvenli yeniden başlat
 # ------------------------------------------------------------
-PROD_NEXT=("gnc-erp:3001" "kaloriai:3003" "fruitstorm:3004")
+cd "$PROJ" || exit 1
+log "Ana sunucu hazırlanıyor (install → prisma → db:push → seed)…"
+bun install            > /tmp/boot-main-install.log 2>&1 || log "UYARI: bun install hata verdi."
+bunx prisma generate  >> /tmp/boot-main-install.log 2>&1 || log "UYARI: prisma generate hata verdi."
+bun run db:push        >> /tmp/boot-main-install.log 2>&1 || log "UYARI: db:push hata verdi."
+bun prisma/seed.ts     >> /tmp/boot-main-install.log 2>&1 || log "UYARI: seed hata verdi."
 
-for svc_port in "${PROD_NEXT[@]}"; do
-  name="${svc_port%%:*}"; port="${svc_port##*:}"
+kill_port 3000   # eski dev sunucusu yeni Prisma client'ı görsün diye taze başlar
+log "Ana sunucu başlıyor (:3000)…"
+setsid --fork bash -c "cd '$PROJ' && exec bun run dev" \
+  > /tmp/boot-main-dev.log 2>&1 < /dev/null
+
+# ------------------------------------------------------------
+# 4) Mini-services (3001-3007) — klasör yoksa token ile yeniden klonla
+# ------------------------------------------------------------
+TOKEN=$(cat "$ZS/.github-token" 2>/dev/null | tr -d '[:space:]')
+mkdir -p "$PROJ/mini-services"
+
+for entry in "${SERVICES[@]}"; do
+  IFS='|' read -r name repo port mode <<< "$entry"
   dir="$PROJ/mini-services/$name"
-  [ -d "$dir" ] || { log "$name klasörü yok — atlandı."; continue; }
+
+  # 4a) Klasör yoksa klonla (reset sonrası)
+  if [ ! -d "$dir" ]; then
+    if [ -n "$TOKEN" ]; then
+      log "$name klonlanıyor (kaancetin3141/$repo)…"
+      if GIT_TERMINAL_PROMPT=0 git clone -q \
+          "https://x-access-token:${TOKEN}@github.com/kaancetin3141/${repo}.git" "$dir" \
+          2>>/tmp/boot-clone.log; then
+        # Token'ı diskte bırakma — pull gerekirse yeniden yazılır
+        git -C "$dir" remote set-url origin "https://github.com/kaancetin3141/${repo}.git"
+        log "$name klonlandı."
+      else
+        log "HATA: $name klonlanamadı — atlanıyor."
+        continue
+      fi
+    else
+      log "UYARI: token yok, $name klonlanamadı — atlanıyor."
+      continue
+    fi
+  fi
+
+  [ -f "$dir/package.json" ] || { log "$name: package.json yok — atlanıyor."; continue; }
+
+  # 4b) Port açıksa dokunma
   if port_open "$port"; then
     log "$name :$port zaten açık — atlanıyor."
     continue
   fi
-  log "$name hazırlanıyor (üretim modu)…"
-  (
-    cd "$dir"
-    bun install > /tmp/mini-service-install.log 2>&1
-    [ -f prisma/schema.prisma ] && bunx prisma generate >> /tmp/mini-service-install.log 2>&1
-    [ -f prisma/schema.prisma ] && bunx prisma db push --accept-data-loss >> /tmp/mini-service-install.log 2>&1
-    if [ ! -f .next/BUILD_ID ]; then
-      echo "[dev.sh] $name: üretim derlemesi (ilk boot / sıfırlama sonrası — birkaç dakika)…" >> /tmp/mini-service-install.log 2>&1
-      [ "$name" = "kaloriai" ] && rm -f src/middleware.ts
-      NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 bunx next build >> /tmp/mini-service-install.log 2>&1
+
+  # 4c) .env — repo'da yoksa doğru DB URL'ini yaz (varsa DATABASE_URL garanti et)
+  #     DB adı = klasör adının alt çizgili hali (gnc-erp → gnc_erp);
+  #     randevu DB'siz çalışır (ERP API üzerinden) — sadece CRM_BASE yeter.
+  db="${name//-/_}"
+  if [ "$name" = "randevu" ]; then
+    dburl=""   # DB'siz — CRM_BASE üzerinden ERP API'sini kullanır
+  else
+    dburl="postgresql://$ROLE:$PASS@127.0.0.1:5432/$db"
+  fi
+  if [ ! -f "$dir/.env" ] && [ -f "$dir/.env.example" ]; then
+    cp "$dir/.env.example" "$dir/.env"
+  fi
+  if [ "$name" != "randevu" ]; then
+    if ! grep -q "^DATABASE_URL=" "$dir/.env" 2>/dev/null; then
+      printf 'DATABASE_URL="%s"\n' "$dburl" >> "$dir/.env" 2>/dev/null || \
+        printf 'DATABASE_URL="%s"\n' "$dburl" > "$dir/.env"
+    else
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\"$dburl\"|" "$dir/.env" 2>/dev/null
     fi
-    exec env NODE_ENV=production node_modules/.bin/next start -p "$port"
-  ) > "/tmp/mini-service-$name.log" 2>&1 &
-  sleep 1
+  fi
+  # Randevu → ERP API'sine bağlanır
+  if [ "$name" = "randevu" ] && ! grep -q "^CRM_BASE=" "$dir/.env" 2>/dev/null; then
+    printf 'CRM_BASE=http://127.0.0.1:3001/api\n' >> "$dir/.env"
+  fi
+
+  # 4d) Kurulum + başlatma (arka planda; log: /tmp/mini-service-*.log)
+  #     ÖNEMLİ: servisin KENDİ DATABASE_URL'i launcher içinde explicit export edilir —
+  #     process env .env dosyasını ezdiği için miras alınan ana DB URL'i felaket olur
+  #     (gnc-erp şeması gnc_inc'e basılıp ana site tablolarını düşürür).
+  log "$name hazırlanıyor ($mode, :$port)…"
+  setsid --fork bash -c '
+    set -u
+    cd "$1"
+    if [ -n "${5:-}" ]; then export DATABASE_URL="$5"; else unset DATABASE_URL; fi
+    export NODE_ENV=development
+    bun install >> "/tmp/mini-service-$2.log" 2>&1
+    if [ -f prisma/schema.prisma ] && [ -n "${5:-}" ]; then
+      bunx prisma generate >> "/tmp/mini-service-$2.log" 2>&1
+      bunx prisma db push --accept-data-loss >> "/tmp/mini-service-$2.log" 2>&1
+    fi
+    if [ "$3" = "prod" ]; then
+      if [ ! -f .next/BUILD_ID ]; then
+        echo "[$2] üretim derlemesi (birkaç dakika)…" >> "/tmp/mini-service-$2.log" 2>&1
+        NODE_OPTIONS="--max-old-space-size=2200" NEXT_TELEMETRY_DISABLED=1 \
+          bunx next build >> "/tmp/mini-service-$2.log" 2>&1
+      fi
+      exec env NODE_ENV=production node_modules/.bin/next start -p "$4"
+    else
+      exec bun run dev
+    fi
+  ' _ "$dir" "$name" "$mode" "$port" "$dburl" > "/tmp/mini-service-$name.log" 2>&1 < /dev/null
 done
 
-for dir in "$PROJ"/mini-services/*/; do
-  name=$(basename "$dir")
-  [ -f "$dir/package.json" ] || { log "$name: package.json yok, atlandı."; continue; }
-  case "$name" in gnc-erp|kaloriai|fruitstorm) continue ;; esac  # prod listesinde
-  port="${PORTS[$name]:-}"
-  if [ -n "$port" ] && port_open "$port"; then
-    log "$name :$port zaten açık — atlanıyor."
+# ------------------------------------------------------------
+# 5) Mobil ürün vitrinleri (Flutter repoları yerine): :3006, :3007
+#    Kaynak kodu repoda (mini-landing/) — reset'te kaybolmaz.
+# ------------------------------------------------------------
+for landing in petguardian:3006 gridpop:3007; do
+  l="${landing%%:*}"; p="${landing##*:}"
+  if port_open "$p"; then
+    log "$l :$p zaten açık — atlanıyor."
     continue
   fi
-  log "$name başlıyor (:${port:-?})…"
-  (
-    cd "$dir"
-    bun install > /tmp/mini-service-install.log 2>&1
-    if grep -q '"dev"' package.json; then
-      bun run dev
-    fi
-  ) > "/tmp/mini-service-$name.log" 2>&1 &
-  sleep 1
+  log "$l vitrini başlıyor (:$p)…"
+  setsid --fork bash -c "cd '$PROJ/mini-landing' && exec bun --hot '$l.ts'" \
+    > "/tmp/mini-service-$l.log" 2>&1 < /dev/null
 done
 
-log "Boot akışı tamam. Ana sunucu: :3000 · mini-services: :3001-:3007"
-wait
+log "Boot akışı tamam. Ana sunucu :3000 · mini-services :3001-3007"
+exit 0

@@ -28,7 +28,6 @@ export const SITE = {
   legal: "GNC Yazılım ve Dijital Ürünler",
   domain: "gncinc.online",
   email: "info@gncinc.online",
-  github: "https://github.com/kaancetin3141",
   founder: "Kaan Çetin",
   year: new Date().getFullYear(),
 };

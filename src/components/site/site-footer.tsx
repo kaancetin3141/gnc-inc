@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Github, Loader2, Mail } from "lucide-react";
+import { Globe, Loader2, Mail } from "lucide-react";
 import { SERVICES, SITE, serviceUrl } from "@/lib/site-config";
 
 /** Meta.com footer'ındaki bülten bloğu: başlık + e-posta + kaydol */
@@ -80,15 +80,17 @@ export function SiteFooter() {
   const companyLinks = [
     { href: "#hakkimizda", label: "Hakkımızda" },
     { href: "#hizmetler", label: "Hizmetler" },
+    { href: "#surec", label: "Nasıl Çalışıyoruz" },
     { href: "#sistemler", label: "Canlı Sistemler" },
     { href: "#projeler", label: "Projeler" },
+    { href: "#sss", label: "S.S.S." },
     { href: "#iletisim", label: "İletişim" },
   ];
 
   const resourceLinks = [
-    { href: SITE.github, label: "GitHub", external: true },
     { href: `mailto:${SITE.email}`, label: "E-posta" },
     { href: serviceUrl({ port: 3001, prodDomain: "crm.gncinc.online" }), label: "ERP Girişi" },
+    { href: "#sss", label: "S.S.S." },
   ];
 
   return (
@@ -118,13 +120,11 @@ export function SiteFooter() {
             </p>
             <div className="mt-5 flex items-center gap-2">
               <a
-                href={SITE.github}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="GitHub"
+                href={`https://${SITE.domain}`}
+                aria-label="Web sitesi"
                 className="flex size-9 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
               >
-                <Github className="size-4" />
+                <Globe className="size-4" />
               </a>
               <a
                 href={`mailto:${SITE.email}`}

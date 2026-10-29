@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, ArrowUpRight, Github } from "lucide-react";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Reveal } from "./reveal";
 import { serviceUrl } from "@/lib/site-config";
@@ -13,7 +13,6 @@ export type ProjectData = {
   category: string;
   port: number | null;
   prodDomain: string | null;
-  repoUrl: string | null;
   techStack: string;
   image: string | null;
   status: string;
@@ -77,26 +76,12 @@ function Showcase({ p, index }: { p: ProjectData; index: number }) {
         {p.techStack}
       </p>
 
-      {/* Meta CTA sırası: dolu pill + sade GitHub linki */}
+      {/* Meta CTA sırası: dolu pill + sade metin linki */}
       <div className="mt-8 flex flex-wrap items-center gap-4">
         {href && (
           <a href={href} className="pill pill-solid">
             Ürünü Aç
             <ArrowRight className="size-4" />
-          </a>
-        )}
-        {p.repoUrl && (
-          <a
-            href={p.repoUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={`meta-link inline-flex items-center gap-1.5 text-sm ${
-              dark ? "" : "text-primary"
-            }`}
-          >
-            <Github className="size-4" />
-            Kaynak kodu
-            <ArrowUpRight className="size-3.5" />
           </a>
         )}
       </div>
@@ -191,17 +176,6 @@ function ProjectCard({ p }: { p: ProjectData }) {
             </a>
           ) : (
             <span />
-          )}
-          {p.repoUrl && (
-            <a
-              href={p.repoUrl}
-              target="_blank"
-              rel="noreferrer"
-              aria-label={`${p.name} GitHub reposu`}
-              className="text-muted-foreground transition-colors hover:text-primary"
-            >
-              <Github className="size-4" />
-            </a>
           )}
         </div>
       </div>

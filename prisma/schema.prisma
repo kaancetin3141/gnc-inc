@@ -18,7 +18,6 @@ model PortfolioProject {
   category    String // "product" | "game" | "platform"
   port        Int? // sandbox portu (3000-3007); harici ürünlerde null
   prodDomain  String? // üretim alt alan adı, örn "crm.gncinc.online"
-  repoUrl     String?
   techStack   String // virgülle ayrılmış: "Next.js 16, PostgreSQL, Prisma"
   image       String? // /images/proj-xxx.png
   status      String   @default("live") // live | soon | maintenance

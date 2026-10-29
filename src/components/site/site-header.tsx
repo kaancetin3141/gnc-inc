@@ -20,6 +20,7 @@ const NAV = [
   { href: "#sistemler", label: "Sistemler" },
   { href: "#hizmetler", label: "Hizmetler" },
   { href: "#hakkimizda", label: "Şirket" },
+  { href: "#sss", label: "S.S.S." },
   { href: "#iletisim", label: "İletişim" },
 ];
 

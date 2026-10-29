@@ -17,3 +17,8 @@ mini-services/
 # misc
 .DS_Store
 *.tsbuildinfo
+
+# Sandbox boot yardımcıları — token ASLA repoya gitmez
+.zscripts/.github-token
+.zscripts/dev.pid
+.zscripts/dev.log
